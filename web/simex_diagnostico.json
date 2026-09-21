@@ -1,0 +1,413 @@
+[
+  {
+    "file": "simex_amazonia_PAMT2007_2024_assentamentos.geojson",
+    "features": 4358,
+    "missing": 0,
+    "empty": 0,
+    "invalid": 30,
+    "geometry_types": {
+      "MultiPolygon": 4358
+    },
+    "reasons": {
+      "Ring Self-intersection": 30
+    },
+    "repair_results": {
+      "Polygon; valid=True; empty=False": 28,
+      "MultiPolygon; valid=True; empty=False": 2
+    },
+    "examples": [
+      {
+        "feature_position_1_based": 744,
+        "reason": "Ring Self-intersection[-54.6916776893738 -3.37497161684661 0]",
+        "repaired_type": "Polygon"
+      },
+      {
+        "feature_position_1_based": 753,
+        "reason": "Ring Self-intersection[-54.7353738518217 -3.20836190967435 0]",
+        "repaired_type": "Polygon"
+      },
+      {
+        "feature_position_1_based": 809,
+        "reason": "Ring Self-intersection[-50.0749628432606 -3.50693489632835 0]",
+        "repaired_type": "Polygon"
+      },
+      {
+        "feature_position_1_based": 824,
+        "reason": "Ring Self-intersection[-56.1262873230015 -1.1091127794312 0]",
+        "repaired_type": "Polygon"
+      },
+      {
+        "feature_position_1_based": 859,
+        "reason": "Ring Self-intersection[-55.6458538917437 -3.97001543926109 0]",
+        "repaired_type": "Polygon"
+      }
+    ],
+    "columns": [
+      "OBJECTID",
+      "area_ha",
+      "UF",
+      "categoria",
+      "Ano",
+      "NM_MUN",
+      "Shape_Leng",
+      "Shape_Area",
+      "gid",
+      "cd_mun",
+      "name",
+      "table_sour",
+      "ownership_",
+      "sub_class",
+      "area_origi",
+      "original_g",
+      "area",
+      "ag_area_lo",
+      "aru_area_l",
+      "carpo_area",
+      "carpr_area",
+      "com_area_l",
+      "ml_area_lo",
+      "nd_b_area_",
+      "nd_i_area_",
+      "ql_area_lo",
+      "sigef_area",
+      "ti_h_area_",
+      "ti_n_area_",
+      "tlpc_area_",
+      "tlpl_area_",
+      "trans_area",
+      "ucpi_area_",
+      "ucus_area_",
+      "urb_area_l",
+      "rast",
+      "cd_mun_con",
+      "created_at",
+      "version",
+      "sigla_uf",
+      "ano",
+      "nome",
+      "geocodigo",
+      "geometry"
+    ]
+  },
+  {
+    "file": "simex_amazonia_PAMT2007_2024_imoveisrurais.geojson",
+    "features": 24013,
+    "missing": 0,
+    "empty": 0,
+    "invalid": 0,
+    "geometry_types": {
+      "Polygon": 21556,
+      "MultiPolygon": 2457
+    },
+    "reasons": {},
+    "repair_results": {},
+    "examples": [],
+    "columns": [
+      "OBJECTID",
+      "area_ha",
+      "UF",
+      "categoria",
+      "Ano",
+      "NM_MUN",
+      "Shape_Leng",
+      "Shape_Area",
+      "gid",
+      "cd_mun",
+      "name",
+      "table_sour",
+      "ownership_",
+      "sub_class",
+      "area_origi",
+      "original_g",
+      "area",
+      "ag_area_lo",
+      "aru_area_l",
+      "carpo_area",
+      "carpr_area",
+      "com_area_l",
+      "ml_area_lo",
+      "nd_b_area_",
+      "nd_i_area_",
+      "ql_area_lo",
+      "sigef_area",
+      "ti_h_area_",
+      "ti_n_area_",
+      "tlpc_area_",
+      "tlpl_area_",
+      "trans_area",
+      "ucpi_area_",
+      "ucus_area_",
+      "urb_area_l",
+      "rast",
+      "cd_mun_con",
+      "created_at",
+      "version",
+      "nome",
+      "geocodigo",
+      "geometry"
+    ]
+  },
+  {
+    "file": "simex_amazonia_PAMT2007_2024_limite_municipios_amz_legal.geojson",
+    "features": 772,
+    "missing": 0,
+    "empty": 0,
+    "invalid": 4,
+    "geometry_types": {
+      "Polygon": 744,
+      "MultiPolygon": 28
+    },
+    "reasons": {
+      "Nested shells": 4
+    },
+    "repair_results": {
+      "MultiPolygon; valid=True; empty=False": 4
+    },
+    "examples": [
+      {
+        "feature_position_1_based": 464,
+        "reason": "Nested shells[-44.095864783 -2.75080993299997]",
+        "repaired_type": "MultiPolygon"
+      },
+      {
+        "feature_position_1_based": 491,
+        "reason": "Nested shells[-45.9552791789999 -1.19154429899993]",
+        "repaired_type": "MultiPolygon"
+      },
+      {
+        "feature_position_1_based": 501,
+        "reason": "Nested shells[-44.780156927 -1.57401179099998]",
+        "repaired_type": "MultiPolygon"
+      },
+      {
+        "feature_position_1_based": 522,
+        "reason": "Nested shells[-43.7102856339999 -2.48500999899994]",
+        "repaired_type": "MultiPolygon"
+      }
+    ],
+    "columns": [
+      "CD_MUN",
+      "NM_UF",
+      "SIGLA_UF",
+      "NM_MUN",
+      "geometry"
+    ]
+  },
+  {
+    "file": "simex_amazonia_PAMT2007_2024_TerrasNDest.geojson",
+    "features": 2518,
+    "missing": 0,
+    "empty": 0,
+    "invalid": 0,
+    "geometry_types": {
+      "Polygon": 2429,
+      "MultiPolygon": 89
+    },
+    "reasons": {},
+    "repair_results": {},
+    "examples": [],
+    "columns": [
+      "OBJECTID",
+      "area_ha",
+      "UF",
+      "categoria",
+      "Ano",
+      "NM_MUN",
+      "Shape_Leng",
+      "Shape_Area",
+      "gid",
+      "cd_mun",
+      "name",
+      "table_sour",
+      "ownership_",
+      "sub_class",
+      "area_origi",
+      "original_g",
+      "area",
+      "ag_area_lo",
+      "aru_area_l",
+      "carpo_area",
+      "carpr_area",
+      "com_area_l",
+      "ml_area_lo",
+      "nd_b_area_",
+      "nd_i_area_",
+      "ql_area_lo",
+      "sigef_area",
+      "ti_h_area_",
+      "ti_n_area_",
+      "tlpc_area_",
+      "tlpl_area_",
+      "trans_area",
+      "ucpi_area_",
+      "ucus_area_",
+      "urb_area_l",
+      "rast",
+      "cd_mun_con",
+      "created_at",
+      "version",
+      "nome",
+      "geocodigo",
+      "geometry"
+    ]
+  },
+  {
+    "file": "simex_amazonia_PAMT2007_2024_TI.geojson",
+    "features": 2846,
+    "missing": 0,
+    "empty": 0,
+    "invalid": 19,
+    "geometry_types": {
+      "MultiPolygon": 2846
+    },
+    "reasons": {
+      "Ring Self-intersection": 19
+    },
+    "repair_results": {
+      "MultiPolygon; valid=True; empty=False": 4,
+      "Polygon; valid=True; empty=False": 15
+    },
+    "examples": [
+      {
+        "feature_position_1_based": 520,
+        "reason": "Ring Self-intersection[-60.6837617539018 -10.7561798704047 0]",
+        "repaired_type": "MultiPolygon"
+      },
+      {
+        "feature_position_1_based": 798,
+        "reason": "Ring Self-intersection[-55.9495793588003 -2.82163394694902 0]",
+        "repaired_type": "Polygon"
+      },
+      {
+        "feature_position_1_based": 893,
+        "reason": "Ring Self-intersection[-46.6736291077971 -2.74342193387508 0]",
+        "repaired_type": "Polygon"
+      },
+      {
+        "feature_position_1_based": 936,
+        "reason": "Ring Self-intersection[-48.833621995059 -4.01812328715994 0]",
+        "repaired_type": "Polygon"
+      },
+      {
+        "feature_position_1_based": 976,
+        "reason": "Ring Self-intersection[-46.838169150286 -2.30713928674862 0]",
+        "repaired_type": "Polygon"
+      }
+    ],
+    "columns": [
+      "OBJECTID",
+      "area_ha",
+      "UF",
+      "categoria",
+      "Ano",
+      "NM_MUN",
+      "Shape_Leng",
+      "Shape_Area",
+      "id",
+      "terrai_cod",
+      "terrai_nom",
+      "etnia_nome",
+      "fase_ti",
+      "sigla_uf",
+      "OBJECTID_1",
+      "nome",
+      "geocodigo",
+      "geometry"
+    ]
+  },
+  {
+    "file": "simex_amazonia_PAMT2007_2024_UC.geojson",
+    "features": 1351,
+    "missing": 0,
+    "empty": 0,
+    "invalid": 0,
+    "geometry_types": {
+      "Polygon": 1275,
+      "MultiPolygon": 76
+    },
+    "reasons": {},
+    "repair_results": {},
+    "examples": [],
+    "columns": [
+      "OBJECTID",
+      "area_ha",
+      "UF",
+      "categoria",
+      "Ano",
+      "NM_MUN",
+      "Shape_Leng",
+      "Shape_Area",
+      "id",
+      "nome",
+      "categoria_",
+      "grupo",
+      "esfera",
+      "ano_cria",
+      "nome_1",
+      "geocodigo",
+      "geometry"
+    ]
+  },
+  {
+    "file": "simex_amazonia_PAMT2007_2024_mun.geojson",
+    "features": 25191,
+    "missing": 0,
+    "empty": 0,
+    "invalid": 87,
+    "geometry_types": {
+      "Polygon": 21493,
+      "MultiPolygon": 3698
+    },
+    "reasons": {
+      "Hole lies outside shell": 44,
+      "Nested shells": 43
+    },
+    "repair_results": {
+      "MultiPolygon; valid=True; empty=False": 51,
+      "Polygon; valid=True; empty=False": 36
+    },
+    "examples": [
+      {
+        "feature_position_1_based": 2776,
+        "reason": "Hole lies outside shell[-55.0606206494234 -12.1006362847367 0]",
+        "repaired_type": "MultiPolygon"
+      },
+      {
+        "feature_position_1_based": 3567,
+        "reason": "Nested shells[-56.8021759129879 -10.8622843171675 0]",
+        "repaired_type": "MultiPolygon"
+      },
+      {
+        "feature_position_1_based": 4770,
+        "reason": "Hole lies outside shell[-56.6841754356478 -12.0821216566891 0]",
+        "repaired_type": "MultiPolygon"
+      },
+      {
+        "feature_position_1_based": 5546,
+        "reason": "Hole lies outside shell[-59.597295640981 -10.4395246974068 0]",
+        "repaired_type": "MultiPolygon"
+      },
+      {
+        "feature_position_1_based": 5640,
+        "reason": "Hole lies outside shell[-59.7052510876675 -9.86995828005053 0]",
+        "repaired_type": "MultiPolygon"
+      }
+    ],
+    "columns": [
+      "OBJECTID",
+      "area_ha",
+      "UF",
+      "categoria",
+      "Ano",
+      "NM_MUN",
+      "Shape_Leng",
+      "Shape_Area",
+      "id",
+      "nome",
+      "geocodigo",
+      "anoderefer",
+      "Municipio",
+      "geometry"
+    ]
+  }
+]

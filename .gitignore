@@ -1,0 +1,32 @@
+# Ambiente virtual
+venv/
+.env/
+.venv/
+
+# Arquivos de credenciais e configs locais
+*.env
+*.local
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+
+# Pastas de build / dist
+build/
+dist/
+*.egg-info/
+
+# IDEs / Editors
+.vscode/
+.idea/
+*.swp
+
+# macOS / Windows lixo de sistema
+.DS_Store
+Thumbs.db
+
+# Dados locais (não versionar)
+dados/
