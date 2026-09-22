@@ -1,0 +1,3 @@
+# Finais de linha LF no repositório (Ubuntu); scripts .bat mantêm CRLF
+* text=auto eol=lf
+*.bat text eol=crlf

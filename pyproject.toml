@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imazongeo-upload"
+dynamic = ["version"]
+description = "Publicação dos datasets do ImazonGeo (SAD, Floreser, Ameaça & Pressão e SIMEX) no AWS S3."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "boto3>=1.34",
+    "python-dotenv>=1.0",
+    "pandas>=2.0",
+    "geopandas>=0.14",
+    "pyogrio>=0.7",
+    "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+web = [
+    "Flask>=3.0,<4",
+    "gunicorn>=22; sys_platform != 'win32'",
+]
+dev = [
+    "imazongeo-upload[web]",
+    "pytest>=8",
+    "ruff>=0.6",
+]
+build = ["pyinstaller>=6.0"]
+
+[project.scripts]
+imazongeo-upload = "imazongeo_upload.cli:main"
+imazongeo-simulador = "imazongeo_upload.simulador:main"
+imazongeo-web = "imazongeo_upload.web.server:main"
+
+[project.gui-scripts]
+imazongeo-upload-gui = "imazongeo_upload.gui:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "imazongeo_upload.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"imazongeo_upload.web" = ["templates/*.html", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+# E/W: pycodestyle (PEP 8) · F: pyflakes · I: isort · N: pep8-naming
+# UP: pyupgrade · B: bugbear · C4: comprehensions
+select = ["E", "W", "F", "I", "N", "UP", "B", "C4"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["imazongeo_upload"]

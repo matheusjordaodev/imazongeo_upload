@@ -1,0 +1,38 @@
+# Serviço systemd da interface web (instalado por deploy/install_ubuntu.sh).
+#
+#   sudo systemctl status imazongeo-upload
+#   sudo journalctl -u imazongeo-upload -f
+
+[Unit]
+Description=ImazonGeo Upload (interface web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=imazon
+Group=imazon
+WorkingDirectory=/opt/imazongeo-upload
+EnvironmentFile=/etc/imazongeo-upload/imazongeo-upload.env
+ExecStart=/opt/imazongeo-upload/venv/bin/gunicorn \
+    -c /opt/imazongeo-upload/gunicorn.conf.py \
+    imazongeo_upload.web.server:app
+Restart=on-failure
+RestartSec=5
+
+# Isolamento: só o diretório de estado e o /tmp privado são graváveis
+StateDirectory=imazongeo-upload
+Environment=HOME=/var/lib/imazongeo-upload
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
