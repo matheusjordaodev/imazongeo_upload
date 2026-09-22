@@ -461,6 +461,7 @@ def processar_sad_zip(
     todos_meses: bool = False,
     public: bool = True,
     dashboard_todos_meses: bool = True,
+    banco: str | None = None,
 ) -> None:
     """Atualiza o SAD a partir do ZIP recebido.
 
@@ -483,6 +484,10 @@ def processar_sad_zip(
 
        Só para o mês ano/mes (se omitidos, o último mês do nome dos
        arquivos) ou, com todos_meses=True, para cada mês com alertas no ZIP.
+
+    Com ``banco`` ('real' ou 'simulation', ver banco.carga_sad.modo_banco),
+    os alertas de todos os meses do ZIP são gravados antes no banco
+    (imazongeo.sad_alerta); se a gravação falhar, nada é enviado ao S3.
     """
     zips = [Path(z) for z in zips]
     if not zips:
@@ -530,6 +535,12 @@ def processar_sad_zip(
         dir_extraido.mkdir()
         logging.info("Extraindo ZIP(s) em %s …", dir_extraido)
         camadas = _extrair_zips_sad(zips, dir_extraido)
+
+        if banco:
+            from .banco.carga_sad import arquivo_da_camada, gravar
+
+            logging.info(">>> Banco de dados (%s)", banco)
+            gravar([arquivo_da_camada(c) for c in camadas], banco)
 
         atributos = {}
         for c in camadas:

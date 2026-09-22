@@ -17,6 +17,8 @@ Variáveis de ambiente (além das credenciais AWS e de UPLOAD_PASSWORD):
   de um proxy (nginx), inclua o domínio público.
 - ``WEB_SECRET_KEY``: chave das sessões; se omitida, uma aleatória é gerada
   a cada reinício (as sessões abertas expiram).
+- ``DATABASE_URL``: banco PostgreSQL/PostGIS usado por SIMEX, Ameaça & Pressão
+  e Floreser (envio → banco → S3; ver :mod:`imazongeo_upload.banco`).
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from shapely.geometry import shape
 from werkzeug.datastructures import FileStorage
 
 from ..ameaca_pressao import nome_s3_ap
+from ..banco.padrao import PADROES, Periodo
 from ..config import LOG_FORMAT, load_env
 from ..datasets import DATASETS, FORMATS
 from ..s3 import usar_cliente_s3
@@ -170,6 +173,8 @@ def _validate_form(form: Mapping[str, str]) -> dict[str, Any]:
             raise ValueError("Confirme a atualização dos objetos no S3.")
         if not os.getenv("ACCESS_KEY") or not os.getenv("PRIVATE_KEY"):
             raise ValueError("Configure ACCESS_KEY e PRIVATE_KEY no .env da aplicação.")
+    if dataset in PADROES and mode != "dry_run" and not os.getenv("DATABASE_URL"):
+        raise ValueError("Configure DATABASE_URL no .env da aplicação.")
     return {
         "dataset": dataset,
         "mode": mode,
@@ -242,6 +247,8 @@ def prepare(
     options = _validate_form(form)
     dataset, op, year = options["dataset"], options["op"], options["year"]
     uploads = [f for f in uploads if f.filename]
+    if dataset in PADROES:
+        return _prepare_banco(options, uploads, base, form.get("public") == "on")
     if not uploads or (dataset != "sad" and len(uploads) != 1):
         raise ValueError(
             "Selecione um ZIP contendo GeoJSONs (o SAD aceita várias partes)."
@@ -294,6 +301,33 @@ def prepare(
     }
 
 
+def _prepare_banco(
+    options: dict[str, Any], uploads: list[FileStorage], base: Path, public: bool
+) -> dict[str, Any]:
+    """Arquivo único para o fluxo envio → banco → S3 (validado no job)."""
+    aceitas = (".zip", ".geojson") + (
+        (".csv",) if options["dataset"] == "floreser" else ()
+    )
+    if len(uploads) != 1:
+        raise ValueError("Selecione um único arquivo com todas as camadas do período.")
+    nome = PurePosixPath(uploads[0].filename.replace("\\", "/")).name
+    if Path(nome).suffix.lower() not in aceitas:
+        raise ValueError("Selecione um arquivo " + ", ".join(aceitas) + ".")
+    dest = base / "envio" / f"entrada{Path(nome).suffix.lower()}"
+    dest.parent.mkdir(parents=True)
+    uploads[0].save(dest)
+    if dest.suffix == ".zip":
+        validate_zip(dest)
+    trimestre = options["quarter"] if options["dataset"] == "ameaca_pressao" else None
+    return {
+        **options,
+        "paths": [dest],
+        "filename": nome,
+        "periodo": Periodo(options["year"], trimestre),
+        "public": public,
+    }
+
+
 class JobLog(logging.Handler):
     """Guarda no job os logs emitidos pela thread do processamento."""
 
@@ -312,7 +346,21 @@ class JobLog(logging.Handler):
 
 def _run(options: dict[str, Any], base: Path) -> None:
     dry = options["mode"] == "dry_run"
-    if options["dataset"] == "sad":
+    if options["dataset"] in PADROES:
+        from ..banco.fluxo import processar_envio
+
+        processar_envio(
+            options["paths"][0],
+            options["dataset"],
+            options["periodo"],
+            bucket=options["bucket"],
+            modo=options["mode"],
+            public=options["public"],
+            nome=options["filename"],
+        )
+    elif options["dataset"] == "sad":
+        from ..banco.carga_sad import modo_banco
+
         processar_sad_zip(
             zips=options["paths"],
             bucket=options["bucket"],
@@ -322,6 +370,7 @@ def _run(options: dict[str, Any], base: Path) -> None:
             todos_meses=options["all_months"],
             dashboard_todos_meses=options["dashboard_all"],
             public=options["public"],
+            banco=modo_banco(dry, options["mode"] == "simulation"),
         )
     else:
         process_zip(options, base)

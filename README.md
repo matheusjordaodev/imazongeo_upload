@@ -6,9 +6,13 @@ dashboards:
 | Dataset | Frequência | Entrada |
 |---|---|---|
 | **SAD** | mensal | ZIP recebido com os alertas acumulados (um arquivo por tipo + camada) |
-| **Floreser** | anual | arquivo do ano |
-| **Ameaça & Pressão** | trimestral | arquivo do trimestre |
-| **SIMEX** | anual | arquivo unificado do ano |
+| **Floreser** | anual | arquivo do ano, gravado no banco de dados |
+| **Ameaça & Pressão** | trimestral | arquivo do trimestre, gravado no banco de dados |
+| **SIMEX** | anual | arquivo do ano com todas as camadas, gravado no banco de dados |
+
+Floreser, Ameaça & Pressão e SIMEX têm o banco PostgreSQL/PostGIS como fonte:
+o envio atualiza o banco e os arquivos do S3 são gerados a partir dele (veja
+[Banco de dados](#banco-de-dados-sad-simex-ameaça--pressão-e-floreser)).
 
 Cada dataset é publicado em três formatos: `shapefile` (ZIP), `csv` e
 `geojson`. Há quatro formas de uso, todas sobre o mesmo pacote Python:
@@ -32,6 +36,7 @@ src/imazongeo_upload/
   simex.py           dashboard do SIMEX
   simulador.py       SimuladorS3 e comando imazongeo-simulador
   cli.py             comando imazongeo-upload
+  banco/             banco PostGIS: padrão, validação, gravação, exportação e comando imazongeo-banco
   gui.py             interface gráfica (Tkinter)
   web/               interface web (Flask): server.py, conversion.py, templates/, static/
 tests/               testes (pytest)
@@ -76,6 +81,7 @@ raiz do repositório. Variáveis já definidas no ambiente têm prioridade.
 | `WEB_HOST`, `WEB_PORT` | endereço da interface web (padrão `127.0.0.1:5000`) |
 | `WEB_ALLOWED_HOSTS` | valores aceitos no cabeçalho `Host`, separados por vírgula (padrão `127.0.0.1:PORTA,localhost:PORTA`) |
 | `WEB_SECRET_KEY` | chave fixa das sessões (opcional) |
+| `DATABASE_URL` | banco PostgreSQL/PostGIS de SIMEX, Ameaça & Pressão e Floreser (ex.: `postgresql://usuario:senha@localhost:5432/imazongeo`) |
 
 As credenciais precisam de `s3:PutObject` e `s3:GetObject` no bucket e,
 para objetos públicos (`--public`), `s3:PutObjectAcl`. O bucket não pode
@@ -106,14 +112,140 @@ imazongeo-simulador sad --zip alertas.zip --storage-dir /tmp/s3-simulado
 `python -m imazongeo_upload` equivale a `imazongeo-upload`. Veja todas as
 opções com `--help`.
 
-Para Floreser, SIMEX e Ameaça & Pressão, os arquivos são procurados em
-`--base-dir` (padrão `dados/`):
+Floreser, SIMEX e Ameaça & Pressão passaram a ser publicados pelo banco
+(`imazongeo-banco`, abaixo). O comando `imazongeo-upload` para essas bases é o
+fluxo legado: publica os nomes antigos sem passar pelo banco. Ele procura os
+arquivos em `--base-dir` (padrão `dados/`):
 
 ```text
 dados/
   floreser/2025/{shapefile,csv,geojson}/floreser_2025.{zip,csv,geojson}
   simex/2025/{shapefile,csv,geojson}/simex_unificado_2025.{zip,csv,geojson}
   ameaca_pressao/2025/T3/{shapefile,csv,geojson}/ameaca_e_pressao_3_trimestre_2025.{zip,csv,geojson}
+```
+
+## Banco de dados (SAD, SIMEX, Ameaça & Pressão e Floreser)
+
+O banco é a fonte dos dados. Cada envio passa por estas etapas:
+
+1. **Validação e padronização** (`banco/entrada.py`, `banco/normalizacao.py`).
+   O envio é um ZIP com GeoJSONs ou Shapefiles, ou um único GeoJSON; o Floreser
+   aceita também CSV. Ele deve trazer todas as camadas do período: as 6 do SIMEX
+   ou os 8 rankings (recorte × classe) do A&P. Os nomes de campo de todas as
+   versões publicadas desde 2007 são convertidos para o padrão.
+2. **Correção automática** (`banco/correcao.py`). O log do envio informa quantas
+   correções de cada tipo foram feitas:
+   - **Geometrias inválidas:** corrigidas com `make_valid`, sem alterar a área.
+     O caso do histórico são 175 polígonos do SIMEX com anel que toca a si
+     mesmo. Linhas ou pontos sem área gerados pelo reparo são descartados.
+   - **Textos com codificação quebrada:** consertados, ex.:
+     `CARAJÃ\x83Â\x81S` → `CARAJÁS`. Espaços sobrando são removidos.
+   - **Valores de vocabulário conhecido:** grafias padronizadas, ex.:
+     uso e categoria do A&P, meses da legenda (`janeiro a marco` → `janeiro a
+     março`) e UFs.
+   - **Nomes do A&P com letra perdida (`�`):** substituídos pelo nome já gravado
+     no banco que corresponde, ex.: `APA Arquip�lago do Maraj�` → `APA
+     Arquipélago do Marajó`.
+   - **`area_ha` do SIMEX:** recalculado pela geometria (área geodésica). No
+     arquivo de origem, as camadas fundiárias trazem a área do polígono antes
+     do recorte. O valor original fica guardado em `atributos`.
+   - **Registros idênticos no mesmo envio (mesmo ano ou trimestre):** removidos.
+     Repetições em anos diferentes e em camadas diferentes do SIMEX são mantidas.
+
+   Continuam sendo erro, porque não há como decidir sozinho: camada ou ranking
+   faltando, registro de outro ano, a mesma área no mesmo ranking com dados
+   diferentes e, no Floreser, a mesma UF/município/idade com áreas diferentes.
+   Os atributos originais de cada registro ficam na coluna `atributos` do banco.
+3. **Gravação**: o envio substitui o período no banco (tabela `carga`), numa
+   única transação.
+4. **Exportação e publicação automática**: GeoJSON, CSV e Shapefile são gerados
+   a partir do banco e enviados ao S3. O registro de cada envio fica na tabela
+   `publicacao`.
+
+O padrão (`banco/padrao.py`) define campos, tipos e nomes de arquivo. Os
+nomes de campo são iguais nas tabelas e nos três formatos e têm até 10
+caracteres, o limite do Shapefile:
+
+| Dataset | Campos | Arquivos no S3 |
+|---|---|---|
+| SIMEX | `ano camada categoria uf municipio cod_mun territorio subclasse area_ha` + geometria | `simex/{geojson,csv,shapefile}/simex_AAAA.*` |
+| Ameaça & Pressão | `ano trimestre legenda recorte classe posicao celulas nome modalidade categoria uso jurisdicao estado` + geometria | `ameaca_e_pressao/{...}/ameaca_e_pressao_AAAA_tN.*` |
+| Floreser | `ano cod_uf estado cod_mun municipio idade area_ha` (sem geometria) | `floreser/csv/floreser_AAAA.csv` |
+
+- **GeoJSON:** WGS 84 com precisão total.
+- **CSV:** UTF-8 com BOM, para abrir com acentos corretos no Excel.
+- **Shapefile:** ZIP com `.cpg` em UTF-8.
+
+Os arquivos legados (`simex_unificado_AAAA`, `ameaca_e_pressao_T_trimestre_AAAA`,
+`floreser/floreser_AAAA.csv` e `dashboard/`) não são alterados. Os dashboards
+passarão a ler o banco: as visões `imazongeo.vw_simex`, `vw_ameaca_pressao` e
+`vw_floreser` já entregam os campos do padrão.
+
+Criação do banco (uma vez, PostgreSQL 15+ com PostGIS 3):
+
+```bash
+sudo -u postgres createdb -O usuario imazongeo
+sudo -u postgres psql -d imazongeo -c "CREATE EXTENSION postgis"
+# PostgreSQL 16 do Ubuntu 24.04: o JIT derruba consultas pesadas com PostGIS
+sudo -u postgres psql -d imazongeo -c "ALTER DATABASE imazongeo SET jit = off"
+```
+
+Comandos (`python -m imazongeo_upload.banco` equivale a `imazongeo-banco`):
+
+```bash
+imazongeo-banco criar-schema                   # todos os datasets
+imazongeo-banco criar-schema --dataset sad     # só o SAD (e as tabelas de controle)
+# Envio → banco → S3 (modo prévia por padrão; --modo simulation | real)
+imazongeo-banco enviar simex_2025.zip --dataset simex --ano 2025 --modo real --public
+imazongeo-banco enviar ap.zip --dataset ameaca_pressao --ano 2025 --trimestre 3 --modo real
+# Histórico: baixa os arquivos legados do S3 público (~1,6 GB em dados/espelho_s3/),
+# grava no banco e publica no padrão novo
+imazongeo-banco baixar-legado
+imazongeo-banco importar-legado
+imazongeo-banco republicar --dataset simex --modo real --public
+```
+
+Os modos são os mesmos da aplicação:
+
+- **Prévia:** só valida, sem abrir o banco nem o S3.
+- **Simulação:** grava numa transação desfeita ao final e envia para um S3 local.
+- **Real:** grava no banco e publica. Se a publicação falhar depois da
+  gravação, o comando `republicar` gera e envia de novo.
+
+A importação do legado nunca sobrescreve um período enviado pela aplicação.
+
+Os testes de integração (`tests/test_banco_integracao.py` e
+`tests/test_banco_sad.py`) rodam com `BANCO_TEST_DATABASE_URL` apontando para um
+banco descartável com PostGIS; eles apagam o esquema `imazongeo` desse banco.
+
+### SAD no banco
+
+O envio do SAD (web, `imazongeo-upload sad` e interface gráfica) grava os
+alertas no banco antes de publicar no S3. A gravação acontece quando
+`DATABASE_URL` está configurada; sem ela, o SAD vai só para o S3, com um aviso.
+Se a gravação falhar, nada é enviado ao S3. Os arquivos do S3 (ZIPs mensais e
+CSVs do dashboard) continuam sendo gerados como antes.
+
+- **Tabela:** `imazongeo.sad_alerta`, com um alerta por linha e geometria.
+- **Visão:** `imazongeo.vw_sad`, lida pelo dashboard do SAD. Campos: `ano mes
+  tipo camada sensor uf municipio territorio uso jurisdicao area_km2`.
+- **Tipo e camada:** vêm do nome de cada arquivo, ex.:
+  `alertas_sad_desmatamento_01_2008_07_2026_municipios.geojson`.
+- **Substituição:** cada mês de cada tipo/camada é uma carga (coluna
+  `particao` da tabela `carga`). Um envio substitui, só para o tipo/camada do
+  arquivo, todos os meses do intervalo do nome, inclusive meses que ficaram sem
+  alertas. As outras partes não mudam.
+- **Correções:** as mesmas do padrão (textos, grafias, geometrias, repetidos).
+  A `area_km2` oficial do arquivo é mantida; só é recalculada pela geometria se
+  vier vazia ou diferir mais de 1% da área do polígono.
+- **Arquivos grandes:** os de mais de 1 GB são lidos em blocos de 20 mil alertas.
+
+Para gravar arquivos já recebidos, sem publicar no S3:
+
+```bash
+imazongeo-banco importar-sad dados/sad/*.geojson            # prévia
+imazongeo-banco importar-sad dados/sad/*.geojson --modo real
+imazongeo-banco importar-sad parte1.zip parte2.zip --modo real
 ```
 
 ## Interface web
@@ -127,6 +259,8 @@ Abra <http://127.0.0.1:5000>. Os modos são **prévia** (sem envio),
 (pede `UPLOAD_PASSWORD` e confirmação). As credenciais nunca são enviadas
 ao navegador. O servidor executa um processamento por vez, aceita até
 1 GB por envio e mantém em memória os logs dos últimos 20 processamentos.
+Para SIMEX, Ameaça & Pressão e Floreser, o envio grava no banco
+(`DATABASE_URL`) e publica no S3 os arquivos gerados a partir dele.
 
 Regras de entrada:
 

@@ -50,7 +50,7 @@ trap 'rm -rf "$BUILD_DIR"' EXIT
 cp -r "$REPO_DIR/pyproject.toml" "$REPO_DIR/README.md" "$REPO_DIR/src" "$BUILD_DIR/"
 "$APP_DIR/venv/bin/pip" install -q "$BUILD_DIR[web]"
 install -m 644 "$REPO_DIR/deploy/gunicorn.conf.py" "$APP_DIR/gunicorn.conf.py"
-for cmd in imazongeo-upload imazongeo-simulador; do
+for cmd in imazongeo-upload imazongeo-simulador imazongeo-banco; do
     ln -sf "$APP_DIR/venv/bin/$cmd" "/usr/local/bin/$cmd"
 done
 

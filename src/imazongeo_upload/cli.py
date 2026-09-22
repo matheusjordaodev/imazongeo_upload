@@ -31,6 +31,15 @@ from .processing import processar_dataset
 from .sad import processar_sad_zip
 
 
+def modo_banco(dry_run: bool) -> str | None:
+    """Gravação do SAD no banco (só com DATABASE_URL e o extra 'banco')."""
+    try:
+        from .banco.carga_sad import modo_banco as modo
+    except ImportError:  # psycopg2 não instalado
+        return None
+    return modo(dry_run)
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Interpreta os argumentos da linha de comando."""
     parser = argparse.ArgumentParser(
@@ -151,6 +160,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     todos_meses=args.todos_meses,
                     dashboard_todos_meses=not args.dashboard_so_mes,
                     public=args.public,
+                    banco=modo_banco(args.dry_run),
                 )
             else:
                 logging.warning("SAD ignorado: informe o ZIP recebido com --zip.")

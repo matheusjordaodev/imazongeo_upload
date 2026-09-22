@@ -11,6 +11,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
+from imazongeo_upload.banco.padrao import Periodo
+from imazongeo_upload.s3 import create_s3_client
 from imazongeo_upload.web import server
 
 
@@ -75,6 +77,20 @@ class WebTests(unittest.TestCase):
                     self.assertEqual(len(output["features"]), 1)
                     self.assertEqual(output["features"][0]["properties"]["ANO"], 2025)
 
+    def test_sad_simulation_writes_database_in_simulation_mode(self):
+        calls = []
+
+        def fake(arquivos, modo, database_url=None):
+            calls.append(([(a.tipo, a.camada) for a in arquivos], modo))
+
+        with (
+            patch.dict(os.environ, {"DATABASE_URL": "postgresql:///teste"}),
+            patch("imazongeo_upload.banco.carga_sad.gravar", fake),
+        ):
+            result = self.finish(self.post(dataset="sad"))
+        self.assertEqual(result["status"], "done", result["logs"])
+        self.assertEqual(calls, [([("desmatamento", "municipios")], "simulation")])
+
     def test_sad_rejects_zip_without_geojson(self):
         self.assertEqual(
             self.post(
@@ -128,6 +144,10 @@ class WebTests(unittest.TestCase):
         hosts = patch.object(server, "ALLOWED_HOSTS", {"localhost:5000"})
         hosts.start()
         self.addCleanup(hosts.stop)
+        # Nunca usa o banco configurado no .env local
+        banco = patch.dict(os.environ, {"DATABASE_URL": ""})
+        banco.start()
+        self.addCleanup(banco.stop)
         self.client = server.app.test_client()
         self.client.get("/", base_url="http://localhost:5000")
         with self.client.session_transaction() as session:
@@ -164,95 +184,105 @@ class WebTests(unittest.TestCase):
             time.sleep(0.025)
         self.fail("Tempo limite excedido")
 
-    def test_simulation_does_not_contact_aws(self):
-        with patch(
-            "imazongeo_upload.s3._novo_cliente_boto3",
-            side_effect=AssertionError("AWS real"),
-        ):
-            result = self.finish(self.post())
-        self.assertEqual(result["status"], "done")
-        self.assertIn("floreser/csv/floreser_2025.csv", "\n".join(result["logs"]))
-
-    def test_ap_dashboard_preview(self):
-        result = self.finish(
-            self.post(
-                dataset="ameaca_pressao",
-                operation="dashboard",
-                format="geojson",
-                mode="dry_run",
-                files=self.sad_zip(name="ameaca_e_pressao_2025_geral_ameaca.geojson"),
-            )
+    def floreser_csv(self):
+        data = io.BytesIO(
+            "ano,cod_uf,estado,cod_mun,municipio,idade,area_ha\n"
+            "2025,11,Rondônia,1100205,Porto Velho,1,10.5\n".encode()
         )
-        self.assertEqual(result["status"], "done")
-        self.assertIn("DRY RUN", "\n".join(result["logs"]))
+        return data, "floreser_2025.csv"
+
+    def test_banco_preview_does_not_touch_database_or_aws(self):
+        with (
+            patch(
+                "imazongeo_upload.banco.db.conectar",
+                side_effect=AssertionError("banco"),
+            ),
+            patch(
+                "imazongeo_upload.s3._novo_cliente_boto3",
+                side_effect=AssertionError("AWS real"),
+            ),
+        ):
+            result = self.finish(self.post(mode="dry_run", files=self.floreser_csv()))
+        self.assertEqual(result["status"], "done", result["logs"])
+        self.assertIn(
+            "[PRÉVIA] Publicaria s3://imazongeo3-web/floreser/csv/floreser_2025.csv",
+            "\n".join(result["logs"]),
+        )
+
+    def test_banco_simulation_uses_simulated_s3(self):
+        calls = []
+
+        def fake(path, dataset, periodo, **kwargs):
+            calls.append((Path(path).suffix, dataset, periodo, kwargs))
+            self.assertIsInstance(create_s3_client(), server.SimuladorS3)
+
+        with (
+            patch.dict(os.environ, {"DATABASE_URL": "postgresql:///teste"}),
+            patch("imazongeo_upload.banco.fluxo.processar_envio", fake),
+        ):
+            result = self.finish(
+                self.post(
+                    dataset="ameaca_pressao",
+                    quarter="3",
+                    files=(io.BytesIO(b"{}"), "ap.geojson"),
+                )
+            )
+        self.assertEqual(result["status"], "done", result["logs"])
+        self.assertEqual(
+            calls,
+            [
+                (
+                    ".geojson",
+                    "ameaca_pressao",
+                    Periodo(2025, 3),
+                    {
+                        "bucket": "imazongeo3-web",
+                        "modo": "simulation",
+                        "public": False,
+                        "nome": "ap.geojson",
+                    },
+                )
+            ],
+        )
+
+    def test_banco_requires_database_url(self):
+        with patch.dict(os.environ, {"DATABASE_URL": ""}):
+            response = self.post(files=self.floreser_csv())
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("DATABASE_URL", response.json["error"])
 
     def test_invalid_period(self):
         self.assertEqual(self.post(month="13").status_code, 400)
 
-    def test_all_other_layers_generate_three_formats(self):
-        for dataset, stem in [
-            ("floreser", "floreser_2025"),
-            ("simex", "simex_unificado_2025"),
-            ("ameaca_pressao", "ameaca_e_pressao_1_trimestre_2025"),
+    def test_banco_accepted_files(self):
+        csv = self.floreser_csv
+        for dataset, files, status in [
+            ("simex", csv(), 400),  # CSV só no Floreser
+            ("simex", (io.BytesIO(b"x"), "dados.txt"), 400),
+            ("floreser", csv(), 202),
         ]:
-            for operation in ("download", "dashboard"):
-                with self.subTest(dataset=dataset, operation=operation):
-                    category = dataset == "ameaca_pressao" and operation == "dashboard"
-                    name = "ameaca_e_pressao_2025_geral_ameaca" if category else stem
-                    with capture_uploads() as captured:
-                        result = self.finish(
-                            self.post(
-                                dataset=dataset,
-                                operation=operation,
-                                files=self.sad_zip(name=name + ".geojson"),
-                            )
-                        )
-                    self.assertEqual(result["status"], "done", result["logs"])
-                    root = (
-                        "ameaca_e_pressao" if dataset == "ameaca_pressao" else dataset
-                    )
-                    prefix = f"dashboard/{root}" if operation == "dashboard" else root
-                    self.assertEqual(
-                        set(captured),
-                        {
-                            f"{prefix}/geojson/{name}.geojson",
-                            f"{prefix}/csv/{name}.csv",
-                            f"{prefix}/shapefile/{name}.zip",
-                        },
-                    )
-                    self.assertEqual(
-                        len(
-                            json.loads(captured[f"{prefix}/geojson/{name}.geojson"])[
-                                "features"
-                            ]
-                        ),
-                        1,
-                    )
-                    self.assertIn(b"Belem", captured[f"{prefix}/csv/{name}.csv"])
-                    with zipfile.ZipFile(
-                        io.BytesIO(captured[f"{prefix}/shapefile/{name}.zip"])
-                    ) as archive:
-                        self.assertTrue(
-                            {".shp", ".shx", ".dbf", ".prj"}.issubset(
-                                {Path(n).suffix for n in archive.namelist()}
-                            )
-                        )
+            with self.subTest(dataset=dataset, name=files[1]):
+                response = self.post(dataset=dataset, mode="dry_run", files=files)
+                self.assertEqual(response.status_code, status, response.json)
+                if status == 202:
+                    self.finish(response)
+        response = self.post(
+            dataset="simex",
+            mode="dry_run",
+            files=[self.sad_zip(), self.sad_zip()],
+        )
+        self.assertEqual(response.status_code, 400)
 
-    def test_other_layers_require_zip_with_geojson(self):
-        for dataset in ("floreser", "simex", "ameaca_pressao"):
-            with self.subTest(dataset=dataset):
-                self.assertEqual(
-                    self.post(
-                        dataset=dataset, files=(io.BytesIO(b"{}"), "file.geojson")
-                    ).status_code,
-                    400,
-                )
-                self.assertEqual(
-                    self.post(
-                        dataset=dataset, files=self.sad_zip(name="file.csv")
-                    ).status_code,
-                    400,
-                )
+    def test_banco_invalid_upload_reports_error(self):
+        result = self.finish(
+            self.post(
+                dataset="simex",
+                mode="dry_run",
+                files=self.sad_zip(name="qualquer.geojson"),
+            )
+        )
+        self.assertEqual(result["status"], "error")
+        self.assertIn("camada SIMEX não identificada", "\n".join(result["logs"]))
 
     def test_real_requires_password(self):
         with patch.dict(os.environ, {"UPLOAD_PASSWORD": "test-password"}):

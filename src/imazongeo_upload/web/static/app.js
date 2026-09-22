@@ -6,26 +6,33 @@ field('year').value = now.getFullYear();
 field('month').value = now.getMonth() + 1;
 field('quarter').value = Math.floor(now.getMonth() / 3) + 1;
 field('mode').value = 'real';
+// Bases gravadas no banco: envio → banco → GeoJSON, CSV e Shapefile no S3
+const BANCO = {
+  simex: {raiz: 'simex', periodo: 'ano', guia: 'Envie o ZIP do ano com todas as camadas do SIMEX (municípios, imóveis rurais, assentamentos, terras indígenas, unidades de conservação e terras não destinadas), em GeoJSON ou Shapefile, um arquivo por camada ou um arquivo com o campo de camada.'},
+  ameaca_pressao: {raiz: 'ameaca_e_pressao', periodo: 'trimestre', guia: 'Envie o ZIP ou GeoJSON do trimestre com os 8 rankings (geral e por categoria, ameaça e pressão). Arquivos com vários trimestres são filtrados pelo ano e trimestre selecionados.'},
+  floreser: {raiz: 'floreser', periodo: 'ano', guia: 'Envie o arquivo do ano (ZIP com GeoJSON/Shapefile, GeoJSON ou CSV) com área por município, UF e idade.'},
+};
 function update() {
-  const sad = field('dataset').value === 'sad';
-  const ap = field('dataset').value === 'ameaca_pressao';
-  const dashboard = field('operation').value === 'dashboard';
-  show('operation-field', !sad); show('format-field', false);
-  show('month-field', sad); show('quarter-field', ap); show('sad-options', sad);
+  const dataset = field('dataset').value;
+  const sad = dataset === 'sad';
+  const banco = BANCO[dataset];
+  show('operation-field', false); show('format-field', false);
+  show('month-field', sad); show('quarter-field', dataset === 'ameaca_pressao'); show('sad-options', sad);
   show('sad-classification', sad);
-  for (const option of field('format').options) option.disabled = !sad && dashboard && (option.value === 'shapefile' || (ap && option.value !== 'geojson'));
-  if (field('format').selectedOptions[0].disabled) field('format').value = 'geojson';
-  const extension = '.zip';
-  field('files').accept = extension; field('files').multiple = sad;
-  document.getElementById('file-label').textContent = 'Selecione o ZIP com GeoJSONs';
-  document.getElementById('guide').textContent = sad ? 'Obrigatório: ZIP contendo GeoJSONs com ANO, MES e polígonos dos alertas. Exemplo de nome interno: alertas_sad_desmatamento_01_2025_municipios.geojson. O sistema converte para Shapefile e CSV e publica os três formatos nas respectivas pastas do S3, além de atualizar o dashboard.' : ap && dashboard ? 'Envie o ZIP anual com os GeoJSONs de ameaça e pressão por categoria. O histórico será mesclado e publicado em GeoJSON, CSV e Shapefile.' : 'Envie um ZIP com os GeoJSONs do período selecionado. Os arquivos serão reunidos e convertidos para GeoJSON, CSV e Shapefile, com publicação nas respectivas pastas do S3.';
+  field('files').accept = sad ? '.zip' : '.zip,.geojson' + (dataset === 'floreser' ? ',.csv' : '');
+  field('files').multiple = sad;
+  document.getElementById('file-label').textContent = sad ? 'Selecione o ZIP com GeoJSONs' : 'Selecione o ZIP (GeoJSON ou Shapefile) ou o GeoJSON' + (dataset === 'floreser' ? ' ou CSV' : '');
   const mode = field('mode').value;
   if (sad) document.getElementById('guide').textContent = 'Envie um ZIP com GeoJSONs de qualquer nome. Para nomes livres, selecione o tipo de alerta e a camada acima; arquivos com nomes já reconhecidos continuam sendo identificados automaticamente. Os períodos são lidos dos campos ANO e MES. Envie um GeoJSON por tipo e camada; para nomes livres de camadas diferentes, faça envios separados. GeoJSON, CSV e Shapefile são gerados automaticamente.';
-  if (ap) document.getElementById('guide').textContent = 'Selecione o ano e o trimestre a atualizar e envie o ZIP com GeoJSONs desse período' + (dashboard ? ', separados por categoria. No dashboard, somente o trimestre selecionado será substituído; os demais períodos serão preservados.' : '. Os três formatos serão publicados com o trimestre no nome.') + ' Se os atributos contiverem ANO e TRIMESTRE ou MES, os dados serão filtrados. Sem esses atributos, o arquivo será considerado do período selecionado.';
+  else {
+    const periodo = banco.periodo === 'trimestre' ? 'AAAA_tN' : 'AAAA';
+    const formatos = dataset === 'floreser' ? 'csv' : '{geojson,csv,shapefile}';
+    document.getElementById('guide').textContent = banco.guia + ` O envio substitui o período no banco de dados e, em seguida, os arquivos são gerados a partir do banco no padrão ImazonGeo e publicados em ${banco.raiz}/${formatos}/${banco.raiz}_${periodo}.`;
+  }
   show('real-options', mode === 'real');
   field('password').required = mode === 'real'; field('confirm').required = mode === 'real';
   document.getElementById('run').textContent = ({dry_run:'Executar prévia →', simulation:'Executar simulação →', real:'Enviar para o S3 →'})[mode];
-  document.getElementById('mode-help').textContent = ({dry_run:'A prévia mostra as operações previstas, sem enviar dados à AWS.', simulation:'Processa os arquivos usando um S3 temporário local, sem credenciais AWS. Os arquivos simulados são apagados ao concluir.', real:'Envia os dados para a AWS usando as credenciais configuradas no .env do servidor.'})[mode];
+  document.getElementById('mode-help').textContent = (banco ? {dry_run:'A prévia valida o arquivo e mostra o que seria gravado no banco e publicado, sem acessar banco nem AWS.', simulation:'Grava no banco numa transação desfeita ao final e publica num S3 temporário local: nada muda no banco nem na AWS.', real:'Grava no banco de dados e publica os arquivos gerados na AWS, com as credenciais do .env do servidor.'} : {dry_run:'A prévia mostra as operações previstas, sem enviar dados à AWS.', simulation:'Processa os arquivos usando um S3 temporário local, sem credenciais AWS. Os arquivos simulados são apagados ao concluir.', real:'Envia os dados para a AWS usando as credenciais configuradas no .env do servidor.'})[mode];
 }
 form.addEventListener('change', update);
 field('files').addEventListener('change', () => {

@@ -25,6 +25,7 @@ from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 from dotenv import load_dotenv
 
 from .ameaca_pressao import processar_ameaca_pressao_dashboard
+from .cli import modo_banco
 from .config import LOG_FORMAT, aws_region, load_env
 from .datasets import (
     DATASETS,
@@ -1424,6 +1425,7 @@ class ImazonUploadApp(tk.Tk):
                         todos_meses=sad_todos_meses,
                         public=True,
                         dashboard_todos_meses=sad_dashboard_todos,
+                        banco=modo_banco(dry_run),
                     )
 
                 if op_download:

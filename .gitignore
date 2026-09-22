@@ -29,5 +29,18 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Dados locais (não versionar)
+# Dados locais (não versionar): ficam no S3 e no banco
 dados/
+espelho_s3/
+
+# Arquivos geoespaciais e pacotes de dados, em qualquer pasta
+*.geojson
+*.gpkg
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.qix
+*.qmd
+*.zip

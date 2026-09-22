@@ -18,7 +18,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Banco PostgreSQL/PostGIS como fonte do S3 (imazongeo_upload.banco)
+banco = ["psycopg2-binary>=2.9", "pyarrow>=14"]
 web = [
+    "imazongeo-upload[banco]",
     "Flask>=3.0,<4",
     "gunicorn>=22; sys_platform != 'win32'",
 ]
@@ -33,6 +36,7 @@ build = ["pyinstaller>=6.0"]
 imazongeo-upload = "imazongeo_upload.cli:main"
 imazongeo-simulador = "imazongeo_upload.simulador:main"
 imazongeo-web = "imazongeo_upload.web.server:main"
+imazongeo-banco = "imazongeo_upload.banco.cli:main"
 
 [project.gui-scripts]
 imazongeo-upload-gui = "imazongeo_upload.gui:main"
@@ -45,6 +49,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "imazongeo_upload.web" = ["templates/*.html", "static/*"]
+"imazongeo_upload.banco" = ["sql/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
