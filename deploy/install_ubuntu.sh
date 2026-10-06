@@ -24,15 +24,35 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-echo ">> Pacotes do sistema"
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip >/dev/null
+# Primeiro Python 3.10+ com o módulo venv (PYTHON=... força um específico).
+# Prefere o mais novo: em máquinas onde o 'python3' foi trocado por uma versão
+# própria, o python3.N do sistema costuma ser o que tem venv funcionando.
+escolher_python() {
+    local candidato
+    for candidato in "${PYTHON:-}" python3.13 python3.12 python3.11 python3.10 python3; do
+        [[ -n $candidato ]] && command -v "$candidato" >/dev/null 2>&1 || continue
+        if "$candidato" -c 'import sys, venv; sys.exit(sys.version_info < (3, 10))' \
+            >/dev/null 2>&1; then
+            command -v "$candidato"
+            return 0
+        fi
+    done
+    return 1
+}
 
-if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))'; then
-    echo "É necessário Python 3.10+ (Ubuntu 22.04 ou mais recente)." >&2
-    exit 1
+echo ">> Python"
+if ! PYTHON=$(escolher_python); then
+    echo "   Instalando Python pelo apt"
+    export DEBIAN_FRONTEND=noninteractive
+    # Ganchos quebrados do apt (ex.: cnf-update-db) não devem parar a instalação
+    apt-get update -qq || echo "   aviso: 'apt-get update' falhou; seguindo" >&2
+    apt-get install -y -qq python3 python3-venv python3-pip >/dev/null
+    PYTHON=$(escolher_python) || {
+        echo "É necessário Python 3.10+ com o módulo venv." >&2
+        exit 1
+    }
 fi
+echo "   usando $PYTHON ($("$PYTHON" -V))"
 
 echo ">> Usuário de serviço ($APP_USER)"
 if ! id "$APP_USER" &>/dev/null; then
@@ -41,7 +61,7 @@ fi
 
 echo ">> Ambiente virtual em $APP_DIR/venv"
 install -d -m 755 "$APP_DIR"
-python3 -m venv "$APP_DIR/venv"
+"$PYTHON" -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install -q --upgrade pip
 # Build a partir de uma cópia, para não deixar build/ e *.egg-info (de root)
 # dentro do repositório
