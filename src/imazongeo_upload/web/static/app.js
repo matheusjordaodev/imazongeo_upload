@@ -1,4 +1,6 @@
 const form = document.querySelector('form');
+// Endereço da API: vem da página, para funcionar sob um caminho (ex.: /upload/)
+const API = form.dataset.api || '/api/jobs';
 const field = name => form.elements.namedItem(name);
 const show = (id, visible) => document.getElementById(id).hidden = !visible;
 const now = new Date();
@@ -56,12 +58,12 @@ form.addEventListener('submit', async event => {
   status.textContent = 'Enviando arquivos ao servidor…';
   logs.textContent = '';
   try {
-    const job = await jsonResponse(await fetch('/api/jobs', {method:'POST', body, headers:{'X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content}}));
+    const job = await jsonResponse(await fetch(API, {method:'POST', body, headers:{'X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content}}));
     status.textContent = 'Processando…';
     let failures = 0;
     while (true) {
       let data;
-      try { data = await jsonResponse(await fetch('/api/jobs/' + job.id)); failures = 0; }
+      try { data = await jsonResponse(await fetch(API + '/' + job.id)); failures = 0; }
       catch (err) { if (++failures >= 5) throw new Error('Conexão perdida. O processamento pode continuar no servidor; não repita o envio sem verificar.'); await new Promise(r => setTimeout(r, 2000)); continue; }
       logs.textContent = data.logs.join('\n'); logs.scrollTop = logs.scrollHeight;
       if (data.status !== 'running') {

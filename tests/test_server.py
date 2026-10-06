@@ -288,6 +288,24 @@ class WebTests(unittest.TestCase):
         with patch.dict(os.environ, {"UPLOAD_PASSWORD": "test-password"}):
             self.assertEqual(self.post(mode="real").status_code, 400)
 
+    def test_servido_sob_um_caminho(self):
+        # Atrás do nginx em /upload/: a página precisa apontar para o prefixo
+        pagina = self.client.get(
+            "/",
+            base_url="http://localhost:5000",
+            headers={"X-Forwarded-Prefix": "/upload"},
+        )
+        html = pagina.get_data(as_text=True)
+        self.assertIn('data-api="/upload/api/jobs"', html)
+        self.assertIn("/upload/static/app.js", html)
+        self.assertIn("/upload/static/style.css", html)
+        # O nginx tira o prefixo antes de repassar, então a API segue em /api/jobs
+        resposta = self.post(
+            mode="dry_run", dataset="floreser", files=self.floreser_csv()
+        )
+        self.assertEqual(resposta.status_code, 202, resposta.json)
+        self.finish(resposta)
+
     def test_csrf(self):
         self.assertEqual(
             self.client.post("/api/jobs", base_url="http://localhost:5000").status_code,

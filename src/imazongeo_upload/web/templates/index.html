@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{ token }}"><title>Imazon • Upload de dados</title><link rel="stylesheet" href="/static/style.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{ token }}"><title>Imazon • Upload de dados</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
 <body>
-<header><a href="/" class="brand">imazon<span>Dados & monitoramento</span></a><span class="badge">VERSÃO WEB</span></header>
+<header><a href="{{ url_for('index') }}" class="brand">imazon<span>Dados & monitoramento</span></a><span class="badge">VERSÃO WEB</span></header>
 <main><div class="intro"><p class="eyebrow">PUBLICAÇÃO DE DADOS</p><h1>Da floresta para a informação.</h1><p>Prepare e envie as bases de monitoramento para o ImazonGeo.</p></div>
-<form id="upload-form">
+<form id="upload-form" data-api="{{ url_for('start_job') }}">
 <section class="card"><h2><span>01</span> Escolha a base</h2><div class="datasets">
 <label><input type="radio" name="dataset" value="sad" checked><strong>SAD</strong><small>Alertas mensais</small></label>
 <label><input type="radio" name="dataset" value="floreser"><strong>Floreser</strong><small>Monitoramento anual</small></label>
@@ -20,4 +20,4 @@
 <section class="card"><h2><span>03</span> Configure o envio</h2><div class="grid"><label>Bucket S3<input name="bucket" value="imazongeo3-web" required></label><label>Modo de execução<select name="mode"><option value="dry_run">Prévia • sem envio</option><option value="simulation">Simulação completa • S3 </option><option value="real">Upload real • AWS S3</option></select></label></div><label class="check"><input type="checkbox" name="public" checked> Aplicar acesso público aos arquivos (public-read)</label><p class="hint" id="mode-help">A prévia mostra as operações previstas, sem enviar dados à AWS.</p><div id="real-options" hidden><label>Senha de autorização<input type="password" name="password" autocomplete="off"></label><label class="check"><input name="confirm" type="checkbox"> Confirmo o envio e a substituição dos dados do período no banco de dados e no S3.</label></div><button id="run" type="submit">Executar prévia <span>→</span></button><p id="error" role="alert"></p></section>
 </form>
 <section class="card log-card"><div class="log-heading"><h2>Acompanhamento</h2><span id="status" role="status">Pronto para começar</span></div><pre id="logs" tabindex="0" aria-label="Logs do processamento">As etapas do processamento aparecerão aqui.</pre></section>
-<footer>Imazon · Instituto do Homem e Meio Ambiente da Amazônia</footer></main><script src="/static/app.js"></script></body></html>
+<footer>Imazon · Instituto do Homem e Meio Ambiente da Amazônia</footer></main><script src="{{ url_for('static', filename='app.js') }}"></script></body></html>

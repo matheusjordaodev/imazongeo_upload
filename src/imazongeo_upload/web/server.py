@@ -17,6 +17,8 @@ Variáveis de ambiente (além das credenciais AWS e de UPLOAD_PASSWORD):
   de um proxy (nginx), inclua o domínio público.
 - ``WEB_SECRET_KEY``: chave das sessões; se omitida, uma aleatória é gerada
   a cada reinício (as sessões abertas expiram).
+- ``WEB_COOKIE_SECURE``: 1 quando o acesso é por HTTPS (atrás do nginx), para
+  o cookie da sessão não trafegar em HTTP.
 - ``DATABASE_URL``: banco PostgreSQL/PostGIS usado por SIMEX, Ameaça & Pressão
   e Floreser (envio → banco → S3; ver :mod:`imazongeo_upload.banco`).
 """
@@ -40,6 +42,7 @@ from typing import Any
 from flask import Flask, jsonify, render_template, request, session
 from shapely.geometry import shape
 from werkzeug.datastructures import FileStorage
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from ..ameaca_pressao import nome_s3_ap
 from ..banco.padrao import PADROES, Periodo
@@ -68,7 +71,13 @@ app.config.update(
     MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES,
     SESSION_COOKIE_SAMESITE="Strict",
     SESSION_COOKIE_HTTPONLY=True,
+    # Atrás de HTTPS (WEB_COOKIE_SECURE=1), o cookie da sessão só vai por TLS
+    SESSION_COOKIE_SECURE=os.getenv("WEB_COOKIE_SECURE", "").strip().lower()
+    in ("1", "true", "on", "sim"),
 )
+# Atrás do nginx: usa Host, protocolo e prefixo (X-Forwarded-Prefix) do proxy,
+# para a aplicação funcionar também sob um caminho, ex.: /upload/
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 lock = threading.Lock()
 jobs: dict[str, dict[str, Any]] = {}
 

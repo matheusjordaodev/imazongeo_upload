@@ -81,6 +81,7 @@ raiz do repositório. Variáveis já definidas no ambiente têm prioridade.
 | `WEB_HOST`, `WEB_PORT` | endereço da interface web (padrão `127.0.0.1:5000`) |
 | `WEB_ALLOWED_HOSTS` | valores aceitos no cabeçalho `Host`, separados por vírgula (padrão `127.0.0.1:PORTA,localhost:PORTA`) |
 | `WEB_SECRET_KEY` | chave fixa das sessões (opcional) |
+| `WEB_COOKIE_SECURE` | `1` quando o acesso é por HTTPS (atrás do nginx) |
 | `DATABASE_URL` | banco PostgreSQL/PostGIS de SIMEX, Ameaça & Pressão e Floreser (ex.: `postgresql://usuario:senha@localhost:5432/imazongeo`) |
 
 As credenciais precisam de `s3:PutObject` e `s3:GetObject` no bucket e,
@@ -259,6 +260,11 @@ Abra <http://127.0.0.1:5000>. Os modos são **prévia** (sem envio),
 (pede `UPLOAD_PASSWORD` e confirmação). As credenciais nunca são enviadas
 ao navegador. O servidor executa um processamento por vez, aceita até
 1 GB por envio e mantém em memória os logs dos últimos 20 processamentos.
+
+A aplicação funciona tanto na raiz de um domínio quanto sob um caminho (ex.:
+`https://dominio/upload/`): basta o nginx enviar `X-Forwarded-Prefix`, como no
+exemplo em `deploy/nginx-imazongeo-upload.conf`. Ela não tem login próprio, então
+exponha sempre atrás de autenticação (senha no nginx) e HTTPS.
 Para SIMEX, Ameaça & Pressão e Floreser, o envio grava no banco
 (`DATABASE_URL`) e publica no S3 os arquivos gerados a partir dele.
 
