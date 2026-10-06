@@ -62,9 +62,10 @@ def criar_schema(conn, datasets: list[str] | None = None) -> None:
     with conn, conn.cursor() as cur:
         cur.execute((SQL_DIR / "base.sql").read_text(encoding="utf-8"))
         for slug in datasets:
-            cur.execute(
-                (SQL_DIR / f"{TODOS[slug].slug}.sql").read_text(encoding="utf-8")
-            )
+            for sufixo in ("", "_visao"):  # visões em arquivo próprio, se houver
+                arquivo = SQL_DIR / f"{slug}{sufixo}.sql"
+                if arquivo.exists():
+                    cur.execute(arquivo.read_text(encoding="utf-8"))
         execute_values(
             cur,
             """INSERT INTO imazongeo.dataset (slug, nome, periodicidade, raiz_s3)

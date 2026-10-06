@@ -474,11 +474,7 @@ def _processar(fonte: FonteSAD, cur, conn, resultado: Resultado) -> None:
 
 
 def _garantir_tabelas(cur) -> None:
-    """Cria (se faltarem) as tabelas de controle e as do SAD, na transação atual.
-
-    Fica na mesma transação da carga: quem consulta o banco só vê o resultado
-    final, inclusive a troca da visão vw_sad.
-    """
+    """Cria (se faltarem) as tabelas de controle e as do SAD, na transação atual."""
     for arquivo in ("base.sql", "sad.sql"):
         cur.execute((db.SQL_DIR / arquivo).read_text(encoding="utf-8"))
     cur.execute(
@@ -486,6 +482,15 @@ def _garantir_tabelas(cur) -> None:
            VALUES (%s, %s, %s, %s) ON CONFLICT (slug) DO NOTHING""",
         (SAD.slug, SAD.nome, SAD.periodicidade, SAD.raiz_s3),
     )
+
+
+def _trocar_visao(cur) -> None:
+    """Recria a vw_sad sobre sad_alerta, no fim da transação.
+
+    A troca trava quem estiver lendo a visão, então acontece depois da carga:
+    o bloqueio dura o fim da transação, e não a carga inteira.
+    """
+    cur.execute((db.SQL_DIR / "sad_visao.sql").read_text(encoding="utf-8"))
 
 
 def gravar(
@@ -522,6 +527,8 @@ def gravar(
                             _garantir_tabelas(cur)
                         for fonte in fontes:
                             _processar(fonte, cur, conn, resultado)
+                        if criar_tabelas:
+                            _trocar_visao(cur)
                     if modo == "simulation":
                         conn.rollback()
                         logging.info(
