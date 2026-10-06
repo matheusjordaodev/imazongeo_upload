@@ -101,6 +101,38 @@ class TestNormalizacaoSad(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fora do padrão"):
             carga_sad.identificar(Path("livre.geojson"))
 
+    def test_identificacao_de_tabela(self):
+        # O Postgres corta nomes em 63 caracteres: a camada chega truncada
+        for tabela, camada in [
+            ("alertas_sad_desmatamento_01_2008_07_2026_municipios", "municipios"),
+            (
+                "alertas_sad_desmatamento_01_2008_07_2026_unidadeconserv",
+                "unidades_conservacao",
+            ),
+            (
+                "alertas_sad_degradacao_09_2008_07_2026_unidadesconserva",
+                "unidades_conservacao",
+            ),
+            (
+                "alertas_sad_desmatamento_01_2008_07_2026_terrasindigena",
+                "terras_indigenas",
+            ),
+            ("alertas_sad_degradacao_09_2008_07_2026_amazonialegal", "amazonia_legal"),
+        ]:
+            t = carga_sad.identificar_tabela(tabela)
+            self.assertEqual(
+                (t.camada, t.esquema, t.nome),
+                (camada, "imazongeo", f"imazongeo.{tabela}"),
+            )
+        t = carga_sad.identificar_tabela(
+            "alertas_sad_degradacao_09_2008_07_2026_municipios"
+        )
+        self.assertEqual(
+            (t.tipo, t.origem, len(t.meses)), ("degradacao", "tabela", 215)
+        )
+        with self.assertRaisesRegex(ValueError, "fora do padrão"):
+            carga_sad.identificar_tabela("alertas_sad_desmatamento_01_2008_rios")
+
 
 class TestPreviaSad(unittest.TestCase):
     def setUp(self):
@@ -150,7 +182,7 @@ class TestPreviaSad(unittest.TestCase):
             set(r.registros),
             {"desmatamento/unidades_conservacao", "desmatamento/municipios"},
         )
-        with self.assertRaisesRegex(ValueError, "Mais de um arquivo"):
+        with self.assertRaisesRegex(ValueError, "Mais de uma fonte"):
             carga_sad.gravar(
                 [carga_sad.identificar(a), carga_sad.identificar(a)], "dry_run"
             )
@@ -298,3 +330,111 @@ class TestBancoSad(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(
+    URL, "defina BANCO_TEST_DATABASE_URL (banco descartável com PostGIS)"
+)
+class TestTabelasExistentes(unittest.TestCase):
+    """Banco como o da VM: tabelas importadas com ogr2ogr e uma vw_sad própria."""
+
+    TABELA = "alertas_sad_desmatamento_01_2025_03_2025_unidadeconserv"
+
+    def setUp(self):
+        with db.conectar(URL) as conn, conn, conn.cursor() as cur:
+            cur.execute("DROP SCHEMA IF EXISTS imazongeo CASCADE")
+            cur.execute("CREATE SCHEMA imazongeo")
+            cur.execute(f"""
+                CREATE TABLE imazongeo.{self.TABELA} (
+                    ogc_fid serial PRIMARY KEY, geom geometry(MultiPolygon, 4326),
+                    alerta varchar, mes varchar, ano varchar, sensor varchar,
+                    estado varchar, areakm2 float8, municipios varchar, uc varchar,
+                    uso varchar, jurisdicao varchar)""")
+            cur.execute(
+                f"INSERT INTO imazongeo.{self.TABELA} (geom, alerta, mes, ano,"
+                " sensor, estado, areakm2, municipios, uc, uso, jurisdicao) VALUES"
+                " (ST_Multi(ST_MakeEnvelope(-52, -5, -51.99, -4.99, 4326)),"
+                "  'desmatamento', '1', '2025', 'Sentinel-2', 'PA', 1.2308,"
+                "  'Altamira', 'APA Triunfo do Xingu', 'uso sustentavel', 'Estadual'),"
+                " (ST_Multi(ST_MakeEnvelope(-52.1, -5, -52.09, -4.99, 4326)),"
+                "  'desmatamento', '2', '2025', 'Sentinel-2', 'PA', 1.2308,"
+                "  'Altamira', 'APA  Triunfo do Xingu', 'Uso Sustentável', 'Estadual')"
+            )
+            # vw_sad anterior, direto da tabela crua (tipos diferentes dos nossos)
+            cur.execute(
+                f"CREATE VIEW imazongeo.vw_sad AS SELECT 'desmatamento'::text AS tipo,"
+                " 'unidades_conservacao'::text AS camada, mes::integer AS mes,"
+                " ano::integer AS ano, sensor, estado AS uf, municipios AS municipio,"
+                " uc AS territorio, uso, jurisdicao, areakm2::numeric AS area_km2, geom"
+                f" FROM imazongeo.{self.TABELA}"
+            )
+
+    def consulta(self, sql: str) -> list[tuple]:
+        with db.conectar(URL) as conn, conn, conn.cursor() as cur:
+            cur.execute(sql)
+            return cur.fetchall()
+
+    def test_migra_tabela_para_o_modelo_e_troca_a_visao(self):
+        self.assertEqual(self.consulta("SELECT count(*) FROM imazongeo.vw_sad"), [(2,)])
+        r = carga_sad.gravar_tabelas(None, "real", URL)
+        self.assertEqual(sum(r.registros.values()), 2)
+
+        # Os alertas agora estão no modelo, com as correções do padrão
+        self.assertEqual(
+            self.consulta(
+                "SELECT tipo, camada, ano, mes, uf, territorio, uso FROM"
+                " imazongeo.sad_alerta ORDER BY mes"
+            ),
+            [
+                (
+                    "desmatamento",
+                    "unidades_conservacao",
+                    2025,
+                    1,
+                    "PA",
+                    "APA Triunfo do Xingu",
+                    "Uso Sustentável",
+                ),
+                (
+                    "desmatamento",
+                    "unidades_conservacao",
+                    2025,
+                    2,
+                    "PA",
+                    "APA Triunfo do Xingu",
+                    "Uso Sustentável",
+                ),
+            ],
+        )
+        # Uma carga por mês do intervalo do nome, com origem 'tabela'
+        self.assertEqual(
+            self.consulta(
+                "SELECT ano, mes, origem, registros, arquivo FROM imazongeo.carga"
+                " WHERE vigente ORDER BY mes"
+            ),
+            [
+                (2025, 1, "tabela", 1, f"imazongeo.{self.TABELA}"),
+                (2025, 2, "tabela", 1, f"imazongeo.{self.TABELA}"),
+                (2025, 3, "tabela", 0, f"imazongeo.{self.TABELA}"),
+            ],
+        )
+        # A visão passou a vir de sad_alerta e a tabela de origem ficou intacta
+        self.assertIn(
+            "sad_alerta",
+            self.consulta("SELECT pg_get_viewdef('imazongeo.vw_sad'::regclass)")[0][0],
+        )
+        self.assertEqual(self.consulta("SELECT count(*) FROM imazongeo.vw_sad"), [(2,)])
+        self.assertEqual(
+            self.consulta(f"SELECT count(*) FROM imazongeo.{self.TABELA}"), [(2,)]
+        )
+
+    def test_previa_nao_altera_nada(self):
+        r = carga_sad.gravar_tabelas(None, "dry_run", URL)
+        self.assertEqual(sum(r.registros.values()), 2)
+        self.assertEqual(
+            self.consulta(
+                "SELECT count(*) FROM information_schema.tables"
+                " WHERE table_schema = 'imazongeo' AND table_name = 'sad_alerta'"
+            ),
+            [(0,)],
+        )

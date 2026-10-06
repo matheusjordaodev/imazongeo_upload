@@ -6,6 +6,8 @@ Exemplos::
   imazongeo-banco criar-schema --dataset sad
   # SAD: arquivos acumulados por tipo/camada (ZIP, GeoJSON ou Shapefile)
   imazongeo-banco importar-sad dados/sad/*.geojson --modo real
+  # SAD já importado no banco (tabelas alertas_sad_...) para o modelo
+  imazongeo-banco importar-tabelas --modo real
   # Envio → banco → S3 (prévia por padrão; --modo simulation ou real)
   imazongeo-banco enviar simex_2025.zip --dataset simex --ano 2025 --modo real --public
   imazongeo-banco enviar ap_t3.zip --dataset ameaca_pressao --ano 2025 --trimestre 3
@@ -56,6 +58,16 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     sad.add_argument("arquivos", type=Path, nargs="+", help=".zip, .geojson ou .shp")
     sad.add_argument("--modo", choices=fluxo.MODOS, default="dry_run")
 
+    tabelas = sub.add_parser(
+        "importar-tabelas",
+        help="Grava no modelo (sad_alerta) tabelas do SAD já existentes no banco",
+    )
+    tabelas.add_argument(
+        "--tabela", action="append", help="Padrão: todas as alertas_sad_... do esquema"
+    )
+    tabelas.add_argument("--esquema", default="imazongeo")
+    tabelas.add_argument("--modo", choices=fluxo.MODOS, default="dry_run")
+
     publicacao = argparse.ArgumentParser(add_help=False)
     publicacao.add_argument("--bucket", default=DEFAULT_BUCKET)
     publicacao.add_argument("--modo", choices=fluxo.MODOS, default="dry_run")
@@ -92,6 +104,16 @@ def _args(argv: Sequence[str] | None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _resumo_sad(resultado) -> None:
+    for particao in sorted(resultado.registros):
+        logging.info(
+            "%s: %d alerta(s), %d mês(es)",
+            particao,
+            resultado.registros[particao],
+            resultado.meses[particao],
+        )
+
+
 def _executar(a: argparse.Namespace) -> None:
     if a.comando == "criar-schema":
         with db.conectar() as conn:
@@ -102,14 +124,11 @@ def _executar(a: argparse.Namespace) -> None:
         if a.modo != "dry_run":
             with db.conectar() as conn:
                 db.criar_schema(conn, ["sad"])
-        r = carga_sad.gravar_caminhos(a.arquivos, a.modo)
-        for particao in sorted(r.registros):
-            logging.info(
-                "%s: %d alerta(s), %d mês(es)",
-                particao,
-                r.registros[particao],
-                r.meses[particao],
-            )
+        _resumo_sad(carga_sad.gravar_caminhos(a.arquivos, a.modo))
+    elif a.comando == "importar-tabelas":
+        from . import carga_sad
+
+        _resumo_sad(carga_sad.gravar_tabelas(a.tabela, a.modo, esquema=a.esquema))
     elif a.comando == "enviar":
         r = fluxo.processar_envio(
             a.arquivo,

@@ -31,8 +31,11 @@ CREATE INDEX IF NOT EXISTS sad_alerta_tipo_camada_idx
 CREATE INDEX IF NOT EXISTS sad_alerta_carga_idx ON imazongeo.sad_alerta (carga_id);
 CREATE INDEX IF NOT EXISTS sad_alerta_geom_idx ON imazongeo.sad_alerta USING gist (geom);
 
--- Lida pelo dashboard do SAD (colunas pelo nome)
-CREATE OR REPLACE VIEW imazongeo.vw_sad AS
+-- Lida pelo dashboard do SAD (colunas pelo nome). Recriada com DROP + CREATE
+-- porque pode existir uma versão anterior com outras colunas ou outros tipos
+-- (ex.: montada sobre tabelas importadas direto dos GeoJSONs).
+DROP VIEW IF EXISTS imazongeo.vw_sad;
+CREATE VIEW imazongeo.vw_sad AS
 SELECT ano, mes, tipo, camada, sensor, uf, municipio, territorio, uso, jurisdicao,
        area_km2, geom, id
 FROM imazongeo.sad_alerta;

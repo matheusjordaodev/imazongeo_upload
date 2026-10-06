@@ -15,6 +15,11 @@ Os arquivos grandes (mais de 1 GB) são lidos em blocos. As correções de
 registros repetidos no mesmo envio e área (a do arquivo é mantida, exceto se
 estiver vazia ou diferir mais de 1% da área do polígono).
 
+Além dos arquivos recebidos, a mesma carga aceita tabelas que já estejam no
+banco (:class:`TabelaSAD`), como as importadas direto dos GeoJSONs com o
+ogr2ogr: os dados são lidos da tabela, passam pelas mesmas conversões e viram
+cargas mensais em ``sad_alerta``, sem precisar dos arquivos de origem.
+
 Modos: ``dry_run`` só lê e valida; ``simulation`` grava numa transação desfeita
 no final; ``real`` grava (uma transação para o envio inteiro).
 """
@@ -25,11 +30,13 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
 import psycopg2
@@ -57,15 +64,120 @@ _CAMPOS = [c for c in SAD.nomes if c not in ("tipo", "camada")]
 
 
 @dataclass
-class ArquivoSAD:
-    caminho: Path
+class FonteSAD:
+    """De onde vem uma parte do SAD: um arquivo ou uma tabela do banco."""
+
     tipo: str  # 'desmatamento' | 'degradacao'
     camada: str  # camada do padrão (CAMADAS_SAD)
-    meses: list[tuple[int, int]]  # (ano, mês) do intervalo do nome do arquivo
+    meses: list[tuple[int, int]]  # (ano, mês) do intervalo do nome
 
     @property
     def particao(self) -> str:
         return f"{self.tipo}/{self.camada}"
+
+    @property
+    def nome(self) -> str:
+        raise NotImplementedError
+
+    @property
+    def origem(self) -> str:
+        """Valor de carga.origem: 'envio' (arquivo) ou 'tabela' (banco)."""
+        return "tabela" if isinstance(self, TabelaSAD) else "envio"
+
+    def identidade(self, conn: Any) -> tuple[str, int]:
+        """(sha256, tamanho em bytes) do que está sendo lido."""
+        raise NotImplementedError
+
+    def lotes(self, conn: Any) -> Iterator[gpd.GeoDataFrame]:
+        raise NotImplementedError
+
+
+@dataclass
+class ArquivoSAD(FonteSAD):
+    caminho: Path = None  # type: ignore[assignment]
+
+    @property
+    def nome(self) -> str:
+        return self.caminho.name
+
+    def identidade(self, conn: Any = None) -> tuple[str, int]:
+        return sha256_arquivo(self.caminho), self.caminho.stat().st_size
+
+    def lotes(self, conn: Any = None) -> Iterator[gpd.GeoDataFrame]:
+        return ler_lotes(self.caminho)
+
+
+@dataclass
+class TabelaSAD(FonteSAD):
+    """Tabela já existente no banco (ex.: importada com ogr2ogr)."""
+
+    tabela: str = ""
+    esquema: str = "imazongeo"
+
+    @property
+    def nome(self) -> str:
+        return f"{self.esquema}.{self.tabela}"
+
+    def _coluna_geometria(self, conn: Any) -> tuple[str, int]:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT column_name FROM information_schema.columns
+                   WHERE table_schema = %s AND table_name = %s AND udt_name = 'geometry'
+                   ORDER BY ordinal_position LIMIT 1""",
+                (self.esquema, self.tabela),
+            )
+            linha = cur.fetchone()
+            if linha is None:
+                raise ValueError(f"{self.nome} não tem coluna de geometria.")
+            cur.execute(
+                """SELECT coalesce(max(srid), 0) FROM geometry_columns
+                   WHERE f_table_schema = %s AND f_table_name = %s""",
+                (self.esquema, self.tabela),
+            )
+            return linha[0], cur.fetchone()[0] or SRID
+
+    def identidade(self, conn: Any) -> tuple[str, int]:
+        """Identidade da tabela: nome, nº de linhas e tamanho em disco.
+
+        Não é o hash do conteúdo (seria custoso), mas muda quando a tabela
+        muda de tamanho, que é o bastante para registrar a carga.
+        """
+        with conn.cursor() as cur:
+            cur.execute(f'SELECT count(*) FROM "{self.esquema}"."{self.tabela}"')
+            linhas = cur.fetchone()[0]
+            cur.execute("SELECT pg_total_relation_size(%s)", (self.nome,))
+            tamanho = cur.fetchone()[0]
+        digest = hashlib.sha256(f"{self.nome}:{linhas}".encode()).hexdigest()
+        return digest, tamanho
+
+    def lotes(self, conn: Any) -> Iterator[gpd.GeoDataFrame]:
+        coluna, srid = self._coluna_geometria(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT column_name FROM information_schema.columns
+                   WHERE table_schema = %s AND table_name = %s AND column_name <> %s
+                   ORDER BY ordinal_position""",
+                (self.esquema, self.tabela, coluna),
+            )
+            atributos = [r[0] for r in cur.fetchall()]
+        colunas = ", ".join(f'"{c}"' for c in atributos)
+        # Cursor no servidor: lê em blocos, sem trazer a tabela toda à memória
+        with conn.cursor(name=f"sad_{self.tabela}"[:60]) as cur:
+            cur.itersize = LOTE
+            cur.execute(
+                f'SELECT {colunas}, ST_AsBinary("{coluna}") AS wkb'
+                f' FROM "{self.esquema}"."{self.tabela}"'
+            )
+            while True:
+                linhas = cur.fetchmany(LOTE)
+                if not linhas:
+                    return
+                dados = {
+                    nome: [linha[i] for linha in linhas]
+                    for i, nome in enumerate(atributos)
+                }
+                geometria = shapely.from_wkb([bytes(linha[-1]) for linha in linhas])
+                yield gpd.GeoDataFrame(dados, geometry=geometria, crs=f"EPSG:{srid}")
 
 
 @dataclass
@@ -91,17 +203,81 @@ def identificar(caminho: Path, tipo: str | None = None, camada: str | None = Non
     if info:
         tipo_nome, camada_nome, periodos = info
         return ArquivoSAD(
-            caminho,
-            tipo_nome,
-            CAMADAS[camada_nome],
-            intervalo(min(periodos), max(periodos)),
+            tipo=tipo_nome,
+            camada=CAMADAS[camada_nome],
+            meses=intervalo(min(periodos), max(periodos)),
+            caminho=caminho,
         )
     if tipo and camada:
-        return ArquivoSAD(caminho, tipo, camada, [])
+        return ArquivoSAD(tipo=tipo, camada=camada, meses=[], caminho=caminho)
     raise ValueError(
         f"{caminho.name}: nome fora do padrão do SAD "
         "(alertas_sad_{tipo}_{MM}_{AAAA}_{MM}_{AAAA}_{camada})."
     )
+
+
+# Camada no nome da tabela. O Postgres corta nomes em 63 caracteres, então
+# "unidadeconservacao" pode chegar como "unidadeconserv": aceita-se prefixo.
+_CAMADAS_TABELA = {
+    "amazonialegal": "amazonia_legal",
+    "municipios": "municipios",
+    "assentamentos": "assentamentos",
+    "terrasindigenas": "terras_indigenas",
+    "terraindigena": "terras_indigenas",
+    "unidadesconservacao": "unidades_conservacao",
+    "unidadeconservacao": "unidades_conservacao",
+}
+_TABELA_RE = re.compile(
+    r"^alertas_sad_(desmatamento|degradacao)_((?:\d{1,2}_\d{4}_)+)([a-z]+)$"
+)
+
+
+def _camada_de_tabela(token: str) -> str | None:
+    if len(token) < 3:
+        return None
+    for variante, camada in _CAMADAS_TABELA.items():
+        if variante.startswith(token) or token.startswith(variante):
+            return camada
+    return None
+
+
+def identificar_tabela(tabela: str, esquema: str = "imazongeo") -> TabelaSAD:
+    """Tipo, camada e meses pelo nome da tabela (mesmo padrão dos arquivos)."""
+    m = _TABELA_RE.match(tabela.lower())
+    camada = _camada_de_tabela(m.group(3)) if m else None
+    if camada is None:
+        raise ValueError(
+            f"{tabela}: nome fora do padrão do SAD "
+            "(alertas_sad_{tipo}_{MM}_{AAAA}_{MM}_{AAAA}_{camada})."
+        )
+    nums = [int(n) for n in m.group(2).strip("_").split("_")]
+    periodos = [(nums[i + 1], nums[i]) for i in range(0, len(nums), 2)]
+    return TabelaSAD(
+        tipo=m.group(1),
+        camada=camada,
+        meses=intervalo(min(periodos), max(periodos)),
+        tabela=tabela,
+        esquema=esquema,
+    )
+
+
+def tabelas_sad(conn: Any, esquema: str = "imazongeo") -> list[TabelaSAD]:
+    """Tabelas do SAD já existentes no banco (alertas_sad_...)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            r"""SELECT table_name FROM information_schema.tables
+                WHERE table_schema = %s AND table_type = 'BASE TABLE'
+                  AND table_name LIKE 'alertas\_sad%%' ORDER BY table_name""",
+            (esquema,),
+        )
+        nomes = [r[0] for r in cur.fetchall()]
+    tabelas = []
+    for nome in nomes:
+        try:
+            tabelas.append(identificar_tabela(nome, esquema))
+        except ValueError as e:
+            logging.warning("%s", e)
+    return tabelas
 
 
 def arquivos_de(caminhos: list[Path], pasta: Path) -> list[ArquivoSAD]:
@@ -138,10 +314,10 @@ def ler_lotes(caminho: Path) -> Iterator[gpd.GeoDataFrame]:
 
 
 def _preparar_lote(
-    gdf: gpd.GeoDataFrame, arq: ArquivoSAD, contador: cor.Contador, primeira: int
+    gdf: gpd.GeoDataFrame, fonte: FonteSAD, contador: cor.Contador, primeira: int
 ) -> tuple[list[dict], list[dict], list[bytes]]:
     """Registros no padrão, atributos originais e geometrias (WKB) do lote."""
-    nome = arq.caminho.name
+    nome = fonte.nome
     props = norm.propriedades(gdf)
     linhas = []
     for i, p in enumerate(props):
@@ -150,7 +326,7 @@ def _preparar_lote(
             for k, v in p.items()
         }
         try:
-            linhas.append(norm.linha_sad(limpo, arq.tipo, arq.camada))
+            linhas.append(norm.linha_sad(limpo, fonte.tipo, fonte.camada))
         except (ValueError, TypeError) as e:
             raise ValueError(f"{nome}, registro {primeira + i + 1}: {e}") from None
     wkbs = geometrias_wkb(gdf, nome, contador)
@@ -171,14 +347,14 @@ def _preparar_lote(
 class _Gravacao:
     """Cargas mensais de uma parte (tipo/camada) numa transação aberta."""
 
-    def __init__(self, cur, arq: ArquivoSAD, sha256: str, tamanho: int) -> None:
-        self.cur, self.arq = cur, arq
+    def __init__(self, cur, fonte: FonteSAD, sha256: str, tamanho: int) -> None:
+        self.cur, self.fonte = cur, fonte
         self.sha256, self.tamanho = sha256, tamanho
         self.cargas: dict[tuple[int, int], int] = {}
         self.registros: Counter = Counter()
         cur.execute(
             "SELECT pg_advisory_xact_lock(hashtext(%s))",
-            (f"imazongeo:sad:{arq.particao}",),
+            (f"imazongeo:sad:{fonte.particao}",),
         )
 
     def carga(self, ano: int, mes: int) -> int:
@@ -190,7 +366,7 @@ class _Gravacao:
             """UPDATE imazongeo.carga SET vigente = false, substituida_em = now()
                WHERE dataset = 'sad' AND vigente AND ano = %s AND mes = %s
                  AND particao = %s RETURNING id""",
-            (ano, mes, self.arq.particao),
+            (ano, mes, self.fonte.particao),
         )
         anteriores = [r[0] for r in cur.fetchall()]
         if anteriores:
@@ -201,12 +377,13 @@ class _Gravacao:
         cur.execute(
             """INSERT INTO imazongeo.carga (dataset, ano, mes, particao, origem,
                    arquivo, sha256, tamanho_bytes, registros)
-               VALUES ('sad', %s, %s, %s, 'envio', %s, %s, %s, 0) RETURNING id""",
+               VALUES ('sad', %s, %s, %s, %s, %s, %s, %s, 0) RETURNING id""",
             (
                 ano,
                 mes,
-                self.arq.particao,
-                self.arq.caminho.name,
+                self.fonte.particao,
+                self.fonte.origem,
+                self.fonte.nome,
                 self.sha256,
                 self.tamanho,
             ),
@@ -222,8 +399,8 @@ class _Gravacao:
             valores.append(
                 (
                     carga_id,
-                    self.arq.tipo,
-                    self.arq.camada,
+                    self.fonte.tipo,
+                    self.fonte.camada,
                     *(linha[c] for c in _CAMPOS),
                     json.dumps(p, ensure_ascii=False, default=str),
                     psycopg2.Binary(w),
@@ -249,21 +426,19 @@ class _Gravacao:
             )
 
 
-def _processar(arq: ArquivoSAD, cur, resultado: Resultado) -> None:
-    """Lê o arquivo em blocos e, com ``cur``, grava cada mês (senão só valida)."""
+def _processar(fonte: FonteSAD, cur, conn, resultado: Resultado) -> None:
+    """Lê a fonte em blocos e, com ``cur``, grava cada mês (senão só valida)."""
     contador = cor.Contador()
     gravacao = None
     if cur is not None:
-        gravacao = _Gravacao(
-            cur, arq, sha256_arquivo(arq.caminho), arq.caminho.stat().st_size
-        )
-        for ano, mes in arq.meses:  # meses sem alertas também são substituídos
+        gravacao = _Gravacao(cur, fonte, *fonte.identidade(conn))
+        for ano, mes in fonte.meses:  # meses sem alertas também são substituídos
             gravacao.carga(ano, mes)
     vistos: set[bytes] = set()
     meses_dados: set[tuple[int, int]] = set()
     lidos = 0
-    for gdf in ler_lotes(arq.caminho):
-        linhas, props, wkbs = _preparar_lote(gdf, arq, contador, lidos)
+    for gdf in fonte.lotes(conn):
+        linhas, props, wkbs = _preparar_lote(gdf, fonte, contador, lidos)
         lidos += len(linhas)
         manter = []
         for linha, w in zip(linhas, wkbs, strict=True):
@@ -278,56 +453,86 @@ def _processar(arq: ArquivoSAD, cur, resultado: Resultado) -> None:
         meses_dados.update((x["ano"], x["mes"]) for x in linhas)
         if gravacao is not None:
             gravacao.inserir(linhas, [props[i] for i in sel], [wkbs[i] for i in sel])
-        resultado.registros[arq.particao] += len(linhas)
-    fora = meses_dados - set(arq.meses)
-    if arq.meses and fora:
+        resultado.registros[fonte.particao] += len(linhas)
+    fora = meses_dados - set(fonte.meses)
+    if fonte.meses and fora:
         resultado.avisos.append(
-            f"{arq.caminho.name}: {len(fora)} mês(es) fora do intervalo do nome "
+            f"{fonte.nome}: {len(fora)} mês(es) fora do intervalo do nome "
             f"(ex.: {min(fora)[1]:02d}/{min(fora)[0]})"
         )
     if gravacao is not None:
         gravacao.fechar()
-    resultado.meses[arq.particao] += len(set(arq.meses) | meses_dados)
-    resultado.avisos += contador.avisos(arq.caminho.name)
+    resultado.meses[fonte.particao] += len(set(fonte.meses) | meses_dados)
+    resultado.avisos += contador.avisos(fonte.nome)
     logging.info(
         "SAD %s: %d alerta(s) em %d mês(es) de %s",
-        arq.particao,
-        resultado.registros[arq.particao],
-        len(set(arq.meses) | meses_dados),
-        arq.caminho.name,
+        fonte.particao,
+        resultado.registros[fonte.particao],
+        len(set(fonte.meses) | meses_dados),
+        fonte.nome,
+    )
+
+
+def _garantir_tabelas(cur) -> None:
+    """Cria (se faltarem) as tabelas de controle e as do SAD, na transação atual.
+
+    Fica na mesma transação da carga: quem consulta o banco só vê o resultado
+    final, inclusive a troca da visão vw_sad.
+    """
+    for arquivo in ("base.sql", "sad.sql"):
+        cur.execute((db.SQL_DIR / arquivo).read_text(encoding="utf-8"))
+    cur.execute(
+        """INSERT INTO imazongeo.dataset (slug, nome, periodicidade, raiz_s3)
+           VALUES (%s, %s, %s, %s) ON CONFLICT (slug) DO NOTHING""",
+        (SAD.slug, SAD.nome, SAD.periodicidade, SAD.raiz_s3),
     )
 
 
 def gravar(
-    arquivos: list[ArquivoSAD], modo: str = "dry_run", database_url: str | None = None
+    fontes: list[FonteSAD],
+    modo: str = "dry_run",
+    database_url: str | None = None,
+    criar_tabelas: bool = False,
 ) -> Resultado:
-    """Grava os arquivos do envio (uma transação para todos)."""
+    """Grava as fontes do SAD (uma transação para todas)."""
     if modo not in ("dry_run", "simulation", "real"):
         raise ValueError(f"Modo inválido: {modo}")
-    particoes = Counter(a.particao for a in arquivos)
+    particoes = Counter(f.particao for f in fontes)
     repetidas = [p for p, n in particoes.items() if n > 1]
     if repetidas:
-        raise ValueError(f"Mais de um arquivo para {repetidas[0]} no mesmo envio.")
+        raise ValueError(f"Mais de uma fonte para {repetidas[0]} no mesmo envio.")
     resultado = Resultado()
-    if modo == "dry_run":
-        for arq in arquivos:
-            _processar(arq, None, resultado)
+    # Ler de tabelas exige conexão mesmo na prévia
+    com_banco = modo != "dry_run" or any(isinstance(f, TabelaSAD) for f in fontes)
+    if not com_banco:
+        for fonte in fontes:
+            _processar(fonte, None, None, resultado)
         logging.info("[PRÉVIA] Nada foi gravado no banco.")
     else:
         with db.conectar(database_url) as conn:
             try:
-                with conn.cursor() as cur:
-                    for arq in arquivos:
-                        _processar(arq, cur, resultado)
-                if modo == "simulation":
+                if modo == "dry_run":
+                    for fonte in fontes:
+                        _processar(fonte, None, conn, resultado)
                     conn.rollback()
-                    logging.info("[SIMULAÇÃO] Transação desfeita: o banco não mudou.")
+                    logging.info("[PRÉVIA] Nada foi gravado no banco.")
                 else:
-                    conn.commit()
-                    logging.info(
-                        "SAD gravado no banco: %d alerta(s).",
-                        sum(resultado.registros.values()),
-                    )
+                    with conn.cursor() as cur:
+                        if criar_tabelas:
+                            _garantir_tabelas(cur)
+                        for fonte in fontes:
+                            _processar(fonte, cur, conn, resultado)
+                    if modo == "simulation":
+                        conn.rollback()
+                        logging.info(
+                            "[SIMULAÇÃO] Transação desfeita: o banco não mudou."
+                        )
+                    else:
+                        conn.commit()
+                        logging.info(
+                            "SAD gravado no banco: %d alerta(s).",
+                            sum(resultado.registros.values()),
+                        )
             except Exception:
                 conn.rollback()
                 raise
@@ -342,6 +547,30 @@ def gravar_caminhos(
     """Grava ZIPs, GeoJSONs ou Shapefiles do SAD (comando imazongeo-banco)."""
     with tempfile.TemporaryDirectory(prefix="imazon_sad_banco_") as tmp:
         return gravar(arquivos_de(caminhos, Path(tmp)), modo, database_url)
+
+
+def gravar_tabelas(
+    nomes: list[str] | None = None,
+    modo: str = "dry_run",
+    database_url: str | None = None,
+    esquema: str = "imazongeo",
+) -> Resultado:
+    """Grava em sad_alerta tabelas que já estão no banco (None = todas).
+
+    Serve para adotar dados importados antes, direto dos GeoJSONs: eles passam
+    pelas mesmas conversões e correções dos envios e viram cargas mensais. As
+    tabelas de origem não são alteradas.
+    """
+    with db.conectar(database_url) as conn:
+        fontes = (
+            [identificar_tabela(n, esquema) for n in nomes]
+            if nomes
+            else tabelas_sad(conn, esquema)
+        )
+    if not fontes:
+        raise ValueError(f"Nenhuma tabela do SAD encontrada no esquema {esquema}.")
+    logging.info("Tabelas a migrar: %s", ", ".join(f.nome for f in fontes))
+    return gravar(fontes, modo, database_url, criar_tabelas=modo != "dry_run")
 
 
 def modo_banco(dry_run: bool, simulacao: bool = False) -> str | None:

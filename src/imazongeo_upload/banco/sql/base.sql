@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS imazongeo.carga (
     ano            smallint NOT NULL,
     trimestre      smallint CHECK (trimestre BETWEEN 1 AND 4),
     mes            smallint CHECK (mes BETWEEN 1 AND 12),
-    origem         text NOT NULL CHECK (origem IN ('envio', 's3_legado')),
+    origem         text NOT NULL CHECK (origem IN ('envio', 's3_legado', 'tabela')),
     arquivo        text NOT NULL,          -- nome do arquivo enviado ou chave S3 legada
     sha256         char(64) NOT NULL,
     tamanho_bytes  bigint NOT NULL,
@@ -37,8 +37,11 @@ CREATE TABLE IF NOT EXISTS imazongeo.carga (
     recebida_em    timestamptz NOT NULL DEFAULT now(),
     substituida_em timestamptz
 );
--- Bancos criados antes da coluna particao
+-- Bancos criados antes da coluna particao e da origem 'tabela'
 ALTER TABLE imazongeo.carga ADD COLUMN IF NOT EXISTS particao text;
+ALTER TABLE imazongeo.carga DROP CONSTRAINT IF EXISTS carga_origem_check;
+ALTER TABLE imazongeo.carga ADD CONSTRAINT carga_origem_check
+    CHECK (origem IN ('envio', 's3_legado', 'tabela'));
 DROP INDEX IF EXISTS imazongeo.carga_vigente_uk;
 CREATE UNIQUE INDEX carga_vigente_uk ON imazongeo.carga
     (dataset, ano, coalesce(trimestre, 0), coalesce(mes, 0), coalesce(particao, ''))
