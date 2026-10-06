@@ -29,9 +29,14 @@ CREATE INDEX IF NOT EXISTS simex_exploracao_carga_idx ON imazongeo.simex_explora
 CREATE INDEX IF NOT EXISTS simex_exploracao_geom_idx
     ON imazongeo.simex_exploracao USING gist (geom);
 
+-- Lida pelo dashboard do SIMEX (colunas pelo nome). Os três últimos campos
+-- alimentam filtros que não têm coluna própria e saem do arquivo recebido.
 CREATE OR REPLACE VIEW imazongeo.vw_simex AS
 SELECT ano, camada, categoria, uf, municipio, cod_mun, territorio, subclasse, area_ha,
-       geom, id
+       geom, id,
+       atributos->>'esfera'  AS esfera,   -- UC: federal ou estadual
+       atributos->>'grupo'   AS grupo,    -- UC: US (uso sustentável) ou PI (proteção integral)
+       atributos->>'fase_ti' AS fase_ti   -- TI: situação jurídica
 FROM imazongeo.simex_exploracao;
 
 CREATE OR REPLACE VIEW imazongeo.vw_simex_municipio_ano AS
