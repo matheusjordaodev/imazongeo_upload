@@ -161,6 +161,11 @@ class WebTests(unittest.TestCase):
         self.assertRegex(html, r"static/app\.js\?v=[0-9a-f]+")
         self.assertRegex(html, r"static/style\.css\?v=[0-9a-f]+")
 
+    def test_pagina_sem_cache(self):
+        """A página não pode vir do cache: leva o token e o endereço da API."""
+        resposta = self.client.get("/", base_url="http://localhost:5000")
+        self.assertEqual(resposta.headers.get("Cache-Control"), "no-store")
+
     def test_sad_rejects_zip_without_geojson(self):
         self.assertEqual(
             self.post(

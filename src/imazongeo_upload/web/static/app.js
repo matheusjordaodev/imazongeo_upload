@@ -1,6 +1,8 @@
 const form = document.querySelector('form');
-// Endereço da API: vem da página, para funcionar sob um caminho (ex.: /upload/)
-const API = form.dataset.api || '/api/jobs';
+// Endereço da API: vem da página, para funcionar sob um caminho (ex.: /upload/).
+// Sem o dado (página antiga em cache), vale o caminho da própria página — nunca
+// a raiz do domínio, onde costuma responder outro serviço.
+const API = form.dataset.api || new URL('api/jobs', location.href).pathname;
 const field = name => form.elements.namedItem(name);
 const show = (id, visible) => document.getElementById(id).hidden = !visible;
 const now = new Date();

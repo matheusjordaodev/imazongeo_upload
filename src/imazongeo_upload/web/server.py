@@ -39,7 +39,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, make_response, render_template, request, session
 from shapely.geometry import shape
 from werkzeug.datastructures import FileStorage
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -106,12 +106,20 @@ def versao_estatica() -> str:
 
 
 @app.get("/")
-def index() -> str:
-    """Página principal."""
+def index() -> Any:
+    """Página principal.
+
+    A página sai sem cache: ela carrega o token CSRF da sessão e o endereço da
+    API. Servida do cache do navegador, uma versão antiga manda o envio para
+    outro lugar (ex.: ``/api/jobs`` na raiz do domínio, de outro serviço).
+    """
     session.setdefault("token", secrets.token_hex(32))
-    return render_template(
+    pagina = render_template(
         "index.html", token=session["token"], versao=versao_estatica()
     )
+    resposta = make_response(pagina)
+    resposta.headers["Cache-Control"] = "no-store"
+    return resposta
 
 
 def validate_zip(path: Path) -> None:
