@@ -62,6 +62,8 @@ ALLOWED_HOSTS = frozenset(
 ) or frozenset({f"127.0.0.1:{PORT}", f"localhost:{PORT}"})
 
 MAX_UPLOAD_BYTES = 1024 * 1024 * 1024  # 1 GB por requisição
+# Formatos aceitos para cada camada dentro do ZIP do SAD
+SAD_CAMADA_EXT = (".geojson", ".gpkg")
 MAX_JOBS = 20  # processamentos mantidos em memória
 MAX_LOG_LINES = 3000
 
@@ -95,11 +97,21 @@ def protect() -> Any:
     return None
 
 
+def versao_estatica() -> str:
+    """Marca dos arquivos estáticos, usada para o navegador não servir cache velho."""
+    pasta = Path(app.static_folder or ".")
+    marcas = (p.stat().st_mtime_ns for p in pasta.glob("*") if p.is_file())
+    marca = max(marcas, default=0)
+    return f"{marca:x}"[-10:]
+
+
 @app.get("/")
 def index() -> str:
     """Página principal."""
     session.setdefault("token", secrets.token_hex(32))
-    return render_template("index.html", token=session["token"])
+    return render_template(
+        "index.html", token=session["token"], versao=versao_estatica()
+    )
 
 
 def validate_zip(path: Path) -> None:
@@ -156,6 +168,41 @@ def validate_sad_geojson(path: Path) -> set[tuple[int, int]]:
     return periods
 
 
+def validate_sad_gpkg(path: Path) -> set[tuple[int, int]]:
+    """Valida uma camada do SAD em GeoPackage e devolve os períodos (ano, mês)."""
+    import pyogrio
+
+    try:
+        info = pyogrio.read_info(path)
+    except Exception as exc:  # noqa: BLE001 - arquivo corrompido ou não suportado
+        raise ValueError(f"{path.name}: GeoPackage inválido.") from exc
+    if not info["features"]:
+        raise ValueError(f"{path.name}: o GeoPackage não tem feições.")
+    if "Polygon" not in (info["geometry_type"] or ""):
+        raise ValueError(
+            f"{path.name}: geometria {info['geometry_type']}; esperado polígono."
+        )
+    faltando = [c for c in ("ANO", "MES") if c not in info["fields"]]
+    if faltando:
+        raise ValueError(f"{path.name}: falta a(s) coluna(s) {', '.join(faltando)}.")
+    import pandas as pd
+
+    tabela = pyogrio.read_dataframe(path, read_geometry=False, columns=["ANO", "MES"])
+    ano = pd.to_numeric(tabela["ANO"], errors="coerce")
+    mes = pd.to_numeric(tabela["MES"], errors="coerce")
+    validos = ano.between(1900, 2100) & mes.between(1, 12)
+    if not validos.any():
+        raise ValueError(f"{path.name}: nenhuma feição com ANO/MES válidos.")
+    return {(int(a), int(m)) for a, m in zip(ano[validos], mes[validos], strict=True)}
+
+
+def validate_sad_camada(path: Path) -> set[tuple[int, int]]:
+    """Períodos (ano, mês) de uma camada do SAD, conforme o formato."""
+    if path.suffix.lower() == ".gpkg":
+        return validate_sad_gpkg(path)
+    return validate_sad_geojson(path)
+
+
 def _validate_form(form: Mapping[str, str]) -> dict[str, Any]:
     """Valida os campos do formulário (base, modo, período, bucket e senha)."""
     dataset = form.get("dataset")
@@ -204,17 +251,25 @@ def _normalize_sad_zip(
     sad_periods: set[tuple[int, int]],
     sad_normalized: list[Path],
 ) -> None:
-    """Valida os GeoJSONs de um ZIP do SAD e os regrava com o nome canônico."""
+    """Valida as camadas de um ZIP do SAD e as regrava com o nome canônico.
+
+    Aceita GeoJSON (.geojson) e GeoPackage (.gpkg), um arquivo por tipo de
+    alerta + camada.
+    """
     members = [m for m in archive.infolist() if not m.is_dir()]
     if any(
         Path(m.filename).suffix.lower() in (".shp", ".shx", ".dbf", ".csv")
         for m in members
     ):
-        raise ValueError("O ZIP do SAD deve conter GeoJSONs, não Shapefiles ou CSVs.")
-    geojsons = [m for m in members if Path(m.filename).suffix.lower() == ".geojson"]
-    if not geojsons:
-        raise ValueError("O ZIP do SAD deve conter pelo menos um arquivo .geojson.")
-    for member in geojsons:
+        raise ValueError(
+            "O ZIP do SAD deve conter GeoJSONs ou GeoPackages, não Shapefiles ou CSVs."
+        )
+    camadas = [m for m in members if Path(m.filename).suffix.lower() in SAD_CAMADA_EXT]
+    if not camadas:
+        raise ValueError(
+            "O ZIP do SAD deve conter pelo menos um arquivo .geojson ou .gpkg."
+        )
+    for member in camadas:
         name = PurePosixPath(member.filename.replace("\\", "/")).name
         info = identificar_camada_sad(name)
         if info is None:
@@ -229,18 +284,18 @@ def _normalize_sad_zip(
         else:
             layer = (info[0], info[1])
         if layer in sad_layers:
-            raise ValueError("Envie apenas um GeoJSON por tipo e camada SAD.")
+            raise ValueError("Envie apenas um arquivo por tipo e camada SAD.")
         sad_layers.add(layer)
         extracted = base / "validacao" / name
         extracted.parent.mkdir(exist_ok=True)
         with archive.open(member) as source, extracted.open("wb") as target:
             shutil.copyfileobj(source, target)
-        periods = validate_sad_geojson(extracted)
+        periods = validate_sad_camada(extracted)
         sad_periods.update(periods)
         start, end = min(periods), max(periods)
         canonical = (
             f"alertas_sad_{layer[0]}_{start[1]:02d}_{start[0]}_"
-            f"{end[1]:02d}_{end[0]}_{layer[1]}.geojson"
+            f"{end[1]:02d}_{end[0]}_{layer[1]}{extracted.suffix.lower()}"
         )
         normalized = base / f"sad_normalizado_{len(sad_normalized)}.zip"
         with zipfile.ZipFile(normalized, "w", zipfile.ZIP_DEFLATED) as output:
@@ -292,7 +347,7 @@ def prepare(
             and (year, options["month"]) not in sad_periods
         ):
             raise ValueError(
-                "O GeoJSON não contém alertas para o mês e ano selecionados."
+                "O arquivo não contém alertas para o mês e ano selecionados."
             )
     geojsons = extract_geojsons(paths[0], base / "entrada") if dataset != "sad" else []
     if annual_zip and any(not nome_s3_ap(p.name) for p in geojsons):

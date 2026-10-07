@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import tempfile
 import time
 import unittest
 import zipfile
@@ -90,6 +91,75 @@ class WebTests(unittest.TestCase):
             result = self.finish(self.post(dataset="sad"))
         self.assertEqual(result["status"], "done", result["logs"])
         self.assertEqual(calls, [([("desmatamento", "municipios")], "simulation")])
+
+    def sad_gpkg(self, nome="alertas_sad_desmatamento_08_2026_municipios.gpkg"):
+        """ZIP com a camada em GeoPackage, como vem do export atual do SAD."""
+        import geopandas as gpd
+        from shapely.geometry import box
+
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / nome
+            gpd.GeoDataFrame(
+                {
+                    "ALERTA": ["desmatamento"],
+                    "MES": [8],
+                    "ANO": [2026],
+                    "SENSOR": ["Sentinel-2"],
+                    "ESTADO": ["PA"],
+                    "AREAKM2": [1.2],
+                    "MUNICIPIOS": ["Altamira"],
+                },
+                geometry=[box(-52, -5, -51.99, -4.99)],
+                crs=4326,
+            ).to_file(caminho, driver="GPKG")
+            dados = io.BytesIO()
+            with zipfile.ZipFile(dados, "w") as archive:
+                archive.write(caminho, nome)
+        dados.seek(0)
+        return dados, "sad_gpkg.zip"
+
+    def test_sad_accepts_geopackage(self):
+        with capture_uploads() as captured:
+            result = self.finish(
+                self.post(dataset="sad", year="2026", month="8", files=self.sad_gpkg())
+            )
+        self.assertEqual(result["status"], "done", result["logs"])
+        self.assertIn("sad/geojson/sad_2026_08.zip", set(captured))
+        with zipfile.ZipFile(
+            io.BytesIO(captured["sad/geojson/sad_2026_08.zip"])
+        ) as archive:
+            self.assertEqual(
+                archive.namelist(),
+                ["alertas_sad_desmatamento_08_2026_municipios.geojson"],
+            )
+
+    def test_sad_rejeita_gpkg_sem_ano_mes(self):
+        import geopandas as gpd
+        from shapely.geometry import box
+
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "alertas_sad_desmatamento_08_2026_municipios.gpkg"
+            gpd.GeoDataFrame(
+                {"ALERTA": ["desmatamento"]},
+                geometry=[box(-52, -5, -51.99, -4.99)],
+                crs=4326,
+            ).to_file(caminho, driver="GPKG")
+            dados = io.BytesIO()
+            with zipfile.ZipFile(dados, "w") as archive:
+                archive.write(caminho, caminho.name)
+        dados.seek(0)
+        resposta = self.post(
+            dataset="sad", year="2026", month="8", files=(dados, "sad.zip")
+        )
+        self.assertEqual(resposta.status_code, 400)
+        self.assertIn("ANO", resposta.json["error"])
+
+    def test_estaticos_com_versao(self):
+        html = self.client.get("/", base_url="http://localhost:5000").get_data(
+            as_text=True
+        )
+        self.assertRegex(html, r"static/app\.js\?v=[0-9a-f]+")
+        self.assertRegex(html, r"static/style\.css\?v=[0-9a-f]+")
 
     def test_sad_rejects_zip_without_geojson(self):
         self.assertEqual(

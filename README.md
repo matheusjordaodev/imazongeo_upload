@@ -5,7 +5,7 @@ dashboards:
 
 | Dataset | Frequência | Entrada |
 |---|---|---|
-| **SAD** | mensal | ZIP recebido com os alertas acumulados (um arquivo por tipo + camada) |
+| **SAD** | mensal | ZIP recebido (um arquivo por tipo + camada, em GeoPackage, GeoJSON ou Shapefile) |
 | **Floreser** | anual | arquivo do ano, gravado no banco de dados |
 | **Ameaça & Pressão** | trimestral | arquivo do trimestre, gravado no banco de dados |
 | **SIMEX** | anual | arquivo do ano com todas as camadas, gravado no banco de dados |

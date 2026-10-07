@@ -23,9 +23,9 @@ function update() {
   show('sad-classification', sad);
   field('files').accept = sad ? '.zip' : '.zip,.geojson' + (dataset === 'floreser' ? ',.csv' : '');
   field('files').multiple = sad;
-  document.getElementById('file-label').textContent = sad ? 'Selecione o ZIP com GeoJSONs' : 'Selecione o ZIP (GeoJSON ou Shapefile) ou o GeoJSON' + (dataset === 'floreser' ? ' ou CSV' : '');
+  document.getElementById('file-label').textContent = sad ? 'Selecione o ZIP com GeoJSON, GeoPackage ou Shapefile' : 'Selecione o ZIP (GeoJSON ou Shapefile) ou o GeoJSON' + (dataset === 'floreser' ? ' ou CSV' : '');
   const mode = field('mode').value;
-  if (sad) document.getElementById('guide').textContent = 'Envie um ZIP com GeoJSONs de qualquer nome. Para nomes livres, selecione o tipo de alerta e a camada acima; arquivos com nomes já reconhecidos continuam sendo identificados automaticamente. Os períodos são lidos dos campos ANO e MES. Envie um GeoJSON por tipo e camada; para nomes livres de camadas diferentes, faça envios separados. GeoJSON, CSV e Shapefile são gerados automaticamente.';
+  if (sad) document.getElementById('guide').textContent = 'Envie um ZIP com as camadas em GeoJSON, GeoPackage (.gpkg) ou Shapefile, com qualquer nome. Para nomes livres, selecione o tipo de alerta e a camada acima; arquivos com nomes já reconhecidos continuam sendo identificados automaticamente. Os períodos são lidos dos campos ANO e MES. Envie um GeoJSON por tipo e camada; para nomes livres de camadas diferentes, faça envios separados. GeoJSON, CSV e Shapefile são gerados automaticamente.';
   else {
     const periodo = banco.periodo === 'trimestre' ? 'AAAA_tN' : 'AAAA';
     const formatos = dataset === 'floreser' ? 'csv' : '{geojson,csv,shapefile}';
@@ -41,9 +41,11 @@ field('files').addEventListener('change', () => {
   document.getElementById('selection').textContent = Array.from(field('files').files, f => `${f.name} (${(f.size/1024/1024).toFixed(1)} MB)`).join(' · ') || 'Nenhum arquivo selecionado.';
 });
 update();
-async function jsonResponse(response) {
-  const data = await response.json().catch(() => ({error:'O servidor retornou uma resposta inesperada.'}));
-  if (!response.ok) throw new Error(data.error || 'Falha na operação.');
+async function jsonResponse(response, campo) {
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw new Error((data && data.error) || `Falha na operação (HTTP ${response.status}).`);
+  // Resposta 200 fora do formato esperado (ex.: página de outro serviço no caminho)
+  if (!data || (campo && data[campo] === undefined)) throw new Error((data && data.error) || 'O servidor retornou uma resposta inesperada. Recarregue a página (Ctrl+F5) e tente de novo.');
   return data;
 }
 form.addEventListener('submit', async event => {
@@ -58,12 +60,12 @@ form.addEventListener('submit', async event => {
   status.textContent = 'Enviando arquivos ao servidor…';
   logs.textContent = '';
   try {
-    const job = await jsonResponse(await fetch(API, {method:'POST', body, headers:{'X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content}}));
+    const job = await jsonResponse(await fetch(API, {method:'POST', body, headers:{'X-CSRF-Token':document.querySelector('meta[name="csrf-token"]').content}}), 'id');
     status.textContent = 'Processando…';
     let failures = 0;
     while (true) {
       let data;
-      try { data = await jsonResponse(await fetch(API + '/' + job.id)); failures = 0; }
+      try { data = await jsonResponse(await fetch(API + '/' + job.id), 'logs'); failures = 0; }
       catch (err) { if (++failures >= 5) throw new Error('Conexão perdida. O processamento pode continuar no servidor; não repita o envio sem verificar.'); await new Promise(r => setTimeout(r, 2000)); continue; }
       logs.textContent = data.logs.join('\n'); logs.scrollTop = logs.scrollHeight;
       if (data.status !== 'running') {

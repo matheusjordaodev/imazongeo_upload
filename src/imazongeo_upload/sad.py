@@ -1,7 +1,8 @@
 """SAD: atualização a partir do ZIP recebido com os alertas acumulados.
 
-O ZIP traz um shapefile (ou GeoJSON) por tipo de alerta + camada. A partir
-dele são gerados os CSVs do dashboard e os arquivos mensais de download.
+O ZIP traz um arquivo por tipo de alerta + camada (Shapefile, GeoJSON ou
+GeoPackage). A partir dele são gerados os CSVs do dashboard e os arquivos
+mensais de download.
 """
 
 from __future__ import annotations
@@ -80,8 +81,11 @@ _SAD_COLUNAS_DASHBOARD = {
 _SAD_RENOMEAR = {"NM_MUN": "MUNICIPIO", "MUNICIPIOS": "MUNICIPIO"}
 _SAD_RENOMEAR_DASHBOARD = {"TI": "TERRA_INDI", "UC": "UNID_CONSE"}
 
+# Formatos de uma camada: Shapefile, GeoJSON ou GeoPackage
+_SAD_CAMADA_EXT = (".shp", ".geojson", ".gpkg")
+
 # Arquivos extraídos do ZIP (o resto, como .qix e .qmd, é ignorado)
-_SAD_EXTENSOES = {".shp", ".shx", ".dbf", ".prj", ".cpg", ".geojson"}
+_SAD_EXTENSOES = {".shp", ".shx", ".dbf", ".prj", ".cpg", ".geojson", ".gpkg"}
 
 
 @dataclass
@@ -145,7 +149,7 @@ def inspecionar_zips_sad(zips: list[Path]) -> dict:
     for zip_path in zips:
         with zipfile.ZipFile(zip_path) as zf:
             for nome in zf.namelist():
-                if Path(nome).suffix.lower() not in (".shp", ".geojson"):
+                if Path(nome).suffix.lower() not in _SAD_CAMADA_EXT:
                     continue
                 info = identificar_camada_sad(nome)
                 if info:
@@ -175,7 +179,7 @@ def _extrair_zips_sad(zips: list[Path], destino: Path) -> list[CamadaSAD]:
 
     camadas: list[CamadaSAD] = []
     for arquivo in sorted(destino.iterdir()):
-        if arquivo.suffix.lower() not in (".shp", ".geojson"):
+        if arquivo.suffix.lower() not in _SAD_CAMADA_EXT:
             continue
         info = identificar_camada_sad(arquivo.name)
         if info is None:
